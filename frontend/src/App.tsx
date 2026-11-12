@@ -35,6 +35,7 @@ function App() {
   const [sessionError, setSessionError] = useState<string | null>(null);
   const [refreshingLibrary, setRefreshingLibrary] = useState(false);
   const [libraryError, setLibraryError] = useState<string | null>(null);
+  const [playingMovie, setPlayingMovie] = useState<Movie | null>(null);
 
   const fetchMovies = async () => {
     const response = await fetch('/api/movies', { credentials: 'include' });
@@ -192,7 +193,12 @@ function App() {
                 {featured?.description ?? 'Stream, browse, and share a private movie collection without leaving the local network.'}
               </p>
               <div className="mt-6 flex flex-wrap items-center gap-3">
-                <button className="inline-flex items-center gap-2 rounded-full bg-cyan-500 px-5 py-3 font-semibold text-slate-950 hover:bg-cyan-400">
+                <button
+                  type="button"
+                  disabled={!featured}
+                  onClick={() => featured && setPlayingMovie(featured)}
+                  className="inline-flex items-center gap-2 rounded-full bg-cyan-500 px-5 py-3 font-semibold text-slate-950 hover:bg-cyan-400 disabled:cursor-not-allowed disabled:opacity-50"
+                >
                   <Play size={16} /> Watch now
                 </button>
                 <button className="rounded-full border border-slate-700 px-5 py-3 font-semibold text-white hover:border-slate-500">My List</button>
@@ -248,7 +254,12 @@ function App() {
                       <h3 className="text-lg font-semibold text-white">{movie.title}</h3>
                       <p className="text-sm text-slate-400">{movie.genre}</p>
                     </div>
-                    <button className="rounded-full border border-slate-700 p-2 text-slate-200 hover:border-cyan-500 hover:text-cyan-300" aria-label="Play movie">
+                    <button
+                      type="button"
+                      onClick={() => setPlayingMovie(movie)}
+                      className="rounded-full border border-slate-700 p-2 text-slate-200 hover:border-cyan-500 hover:text-cyan-300"
+                      aria-label={`Play ${movie.title}`}
+                    >
                       <Play size={15} />
                     </button>
                   </div>
@@ -263,6 +274,37 @@ function App() {
           </div>
         </section>
       </main>
+      {playingMovie && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-4" role="dialog" aria-modal="true" aria-labelledby="player-title">
+          <div className="w-full max-w-5xl overflow-hidden rounded-2xl border border-slate-700 bg-slate-900 shadow-2xl">
+            <div className="flex items-center justify-between gap-4 p-4">
+              <h2 id="player-title" className="truncate text-lg font-semibold text-white">{playingMovie.title}</h2>
+              <button
+                type="button"
+                onClick={() => setPlayingMovie(null)}
+                className="shrink-0 rounded-lg border border-slate-700 px-3 py-1.5 text-sm text-slate-200 hover:border-cyan-500 hover:text-white"
+                aria-label="Close player"
+              >
+                Close
+              </button>
+            </div>
+            <video
+              key={playingMovie.id}
+              className="aspect-video w-full bg-black"
+              src={`/api/movies/${playingMovie.id}/stream`}
+              controls
+              autoPlay
+              playsInline
+              aria-label={playingMovie.title}
+            >
+              Your browser can’t play this video format. Try downloading the file instead.
+            </video>
+            <div className="flex justify-end p-4">
+              <a href={`/api/movies/${playingMovie.id}/download`} className="font-medium text-cyan-300 hover:text-cyan-200">Download instead</a>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
