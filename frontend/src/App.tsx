@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { Film, LogIn, Search, Shield, Tv, FolderOpen, Download, Clock3, Play, User, Server } from 'lucide-react';
+import { Film, LogIn, Search, Shield, Tv, FolderOpen, Download, Clock3, Play, User, Server, QrCode } from 'lucide-react';
+import { QRCodeSVG } from 'qrcode.react';
 
 interface Movie {
   id: number;
@@ -210,9 +211,17 @@ function App() {
               </div>
             </div>
             <div className="rounded-2xl border border-slate-700 bg-slate-900/70 p-4 text-left backdrop-blur">
-              <p className="mb-2 flex items-center gap-2 text-xs uppercase tracking-[0.2em] text-slate-400"><Server size={14} /> Local access</p>
-              <p className="text-xl font-bold text-white">{network?.local_server ?? 'http://127.0.0.1:3000'}</p>
-              <p className="mt-2 text-sm text-slate-300">Upload progress and streaming stay on your Wi‑Fi network.</p>
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <p className="flex items-center gap-2 text-xs uppercase tracking-[0.2em] text-slate-400"><Server size={14} /> Local access</p>
+                <div className="rounded-lg border border-cyan-500/30 bg-cyan-500/10 p-1.5 text-cyan-300"><QrCode size={18} /></div>
+              </div>
+              <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+                <div className="mb-3 flex items-center justify-center rounded-lg bg-white p-2">
+                  <QRCodeSVG value={network?.local_server ?? 'http://127.0.0.1:3000'} size={110} bgColor="#ffffff" fgColor="#0f172a" />
+                </div>
+                <p className="text-xl font-bold text-white">{network?.local_server ?? 'http://127.0.0.1:3000'}</p>
+                <p className="mt-2 text-sm text-slate-300">Scan with your phone to open on the same Wi‑Fi.</p>
+              </div>
             </div>
           </div>
         </section>
@@ -347,9 +356,16 @@ function LoginScreen({ onSubmit, loading, error, network }: { onSubmit: (formDat
               Browse a local movie library, stream directly from your home computer, and share a private collection over the same Wi-Fi network.
             </p>
             <div className="mt-8 rounded-2xl border border-slate-700 bg-slate-950/40 p-4">
-              <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Server URL</p>
-              <p className="mt-2 font-mono text-lg text-white">{network?.local_server ?? 'http://127.0.0.1:3000'}</p>
-              <p className="mt-2 text-sm text-slate-300">Use this address from phones, laptops, and smart TVs on your Wi‑Fi network.</p>
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Server URL</p>
+                  <p className="mt-2 font-mono text-lg text-white">{network?.local_server ?? 'http://127.0.0.1:3000'}</p>
+                  <p className="mt-2 text-sm text-slate-300">Use this address from phones, laptops, and smart TVs on your Wi‑Fi network.</p>
+                </div>
+                <div className="flex items-center justify-center rounded-2xl border border-slate-700 bg-white p-2 shadow-lg shadow-cyan-950/20">
+                  <QRCodeSVG value={network?.local_server ?? 'http://127.0.0.1:3000'} size={110} bgColor="#ffffff" fgColor="#0f172a" />
+                </div>
+              </div>
             </div>
           </div>
         </div>
