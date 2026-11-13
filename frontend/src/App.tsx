@@ -192,6 +192,11 @@ function App() {
               <p className="mt-4 max-w-xl text-sm text-slate-300 md:text-base">
                 {featured?.description ?? 'Stream, browse, and share a private movie collection without leaving the local network.'}
               </p>
+              <div className="mt-5 flex flex-wrap items-center gap-2 text-xs text-slate-300">
+                <span className="rounded-full border border-slate-700 bg-slate-900/70 px-2.5 py-1.5">Private & secure</span>
+                <span className="rounded-full border border-slate-700 bg-slate-900/70 px-2.5 py-1.5">LAN ready</span>
+                <span className="rounded-full border border-slate-700 bg-slate-900/70 px-2.5 py-1.5">Family-first access</span>
+              </div>
               <div className="mt-6 flex flex-wrap items-center gap-3">
                 <button
                   type="button"
@@ -216,6 +221,24 @@ function App() {
           <StatCard icon={<Tv size={18} />} title="Movies" value={String(movies.length)} subtitle="Available in the library" />
           <StatCard icon={<User size={18} />} title="Account" value={session.user?.username ?? 'Admin'} subtitle={session.user?.role ?? 'admin'} />
           <StatCard icon={<Download size={18} />} title="Network" value={network?.urls?.length ? String(network.urls.length) : '1'} subtitle="Devices on the local network" />
+        </section>
+
+        <section className="mt-10 rounded-2xl border border-slate-800 bg-slate-900/80 p-5">
+          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div>
+              <p className="text-xs uppercase tracking-[0.2em] text-cyan-300">Library overview</p>
+              <h2 className="mt-2 text-2xl font-bold text-white">Professional home media control</h2>
+            </div>
+            <div className="inline-flex items-center gap-2 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-3 py-1.5 text-sm text-emerald-300">
+              <span className="h-2 w-2 rounded-full bg-emerald-400" />
+              Operational & ready
+            </div>
+          </div>
+          <div className="mt-5 grid gap-4 md:grid-cols-3">
+            <InfoTile label="Streaming" value="HD & local playback" detail="Optimized for home viewing on shared devices" />
+            <InfoTile label="Security" value="Session protected" detail="Cookie-based access with private admin control" />
+            <InfoTile label="Library" value="Auto discovery" detail="Indexes files from the shared media folder" />
+          </div>
         </section>
 
         <section className="mt-10">
@@ -275,10 +298,10 @@ function App() {
         </section>
       </main>
       {playingMovie && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-4" role="dialog" aria-modal="true" aria-labelledby="player-title">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-4" role="dialog" aria-modal="true" aria-label="Movie player">
           <div className="w-full max-w-5xl overflow-hidden rounded-2xl border border-slate-700 bg-slate-900 shadow-2xl">
             <div className="flex items-center justify-between gap-4 p-4">
-              <h2 id="player-title" className="truncate text-lg font-semibold text-white">{playingMovie.title}</h2>
+              <h2 className="truncate text-lg font-semibold text-white">{playingMovie.title}</h2>
               <button
                 type="button"
                 onClick={() => setPlayingMovie(null)}
@@ -379,6 +402,16 @@ function StatCard({ icon, title, value, subtitle }: { icon: ReactNode; title: st
       <p className="text-sm text-slate-400">{title}</p>
       <p className="mt-2 text-3xl font-bold text-white">{value}</p>
       <p className="mt-2 text-sm text-slate-500">{subtitle}</p>
+    </div>
+  );
+}
+
+function InfoTile({ label, value, detail }: { label: string; value: string; detail: string }) {
+  return (
+    <div className="rounded-2xl border border-slate-800 bg-slate-950/40 p-4">
+      <p className="text-xs uppercase tracking-[0.18em] text-slate-400">{label}</p>
+      <p className="mt-3 text-xl font-semibold text-white">{value}</p>
+      <p className="mt-2 text-sm text-slate-400">{detail}</p>
     </div>
   );
 }
