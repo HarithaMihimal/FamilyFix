@@ -28,6 +28,7 @@ const formatBytes = (bytes: number) => {
 };
 
 function App() {
+  const accessURL = window.location.origin;
   const [session, setSession] = useState<Answer | null>(null);
   const [movies, setMovies] = useState<Movie[]>([]);
   const [network, setNetwork] = useState<{ local_server?: string; urls?: string[] } | null>(null);
@@ -154,7 +155,7 @@ function App() {
 
   if (!session.authenticated) {
     return (
-      <LoginScreen onSubmit={handleLogin} loading={loading} error={error} network={network} />
+      <LoginScreen onSubmit={handleLogin} loading={loading} error={error} accessURL={accessURL} />
     );
   }
 
@@ -217,10 +218,10 @@ function App() {
               </div>
               <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
                 <div className="mb-3 flex items-center justify-center rounded-lg bg-white p-2">
-                  <QRCodeSVG value={network?.local_server ?? 'http://127.0.0.1:3000'} size={110} bgColor="#ffffff" fgColor="#0f172a" />
+                  <QRCodeSVG value={accessURL} size={110} bgColor="#ffffff" fgColor="#0f172a" />
                 </div>
-                <p className="text-xl font-bold text-white">{network?.local_server ?? 'http://127.0.0.1:3000'}</p>
-                <p className="mt-2 text-sm text-slate-300">Scan with your phone to open on the same Wi‑Fi.</p>
+                <p className="break-all font-mono text-lg font-bold text-white">{accessURL}</p>
+                <p className="mt-2 text-sm text-slate-300">Scan to open this exact address on your phone. Both devices must be on the same Wi‑Fi.</p>
               </div>
             </div>
           </div>
@@ -341,7 +342,7 @@ function App() {
   );
 }
 
-function LoginScreen({ onSubmit, loading, error, network }: { onSubmit: (formData: FormData) => void; loading: boolean; error: string | null; network: { local_server?: string; urls?: string[] } | null;}) {
+function LoginScreen({ onSubmit, loading, error, accessURL }: { onSubmit: (formData: FormData) => void; loading: boolean; error: string | null; accessURL: string;}) {
   return (
     <div className="flex min-h-screen items-center justify-center bg-slate-950 px-4 text-slate-100">
       <div className="grid w-full max-w-6xl gap-6 overflow-hidden rounded-3xl border border-slate-800 bg-slate-900/80 shadow-2xl shadow-cyan-950/30 lg:grid-cols-[1.1fr_0.9fr]">
@@ -358,12 +359,12 @@ function LoginScreen({ onSubmit, loading, error, network }: { onSubmit: (formDat
             <div className="mt-8 rounded-2xl border border-slate-700 bg-slate-950/40 p-4">
               <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                 <div>
-                  <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Server URL</p>
-                  <p className="mt-2 font-mono text-lg text-white">{network?.local_server ?? 'http://127.0.0.1:3000'}</p>
-                  <p className="mt-2 text-sm text-slate-300">Use this address from phones, laptops, and smart TVs on your Wi‑Fi network.</p>
+                  <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Open on your phone</p>
+                  <p className="mt-2 break-all font-mono text-lg text-white">{accessURL}</p>
+                  <p className="mt-2 text-sm text-slate-300">Scan this code or enter the address on a device connected to the same Wi‑Fi.</p>
                 </div>
                 <div className="flex items-center justify-center rounded-2xl border border-slate-700 bg-white p-2 shadow-lg shadow-cyan-950/20">
-                  <QRCodeSVG value={network?.local_server ?? 'http://127.0.0.1:3000'} size={110} bgColor="#ffffff" fgColor="#0f172a" />
+                  <QRCodeSVG value={accessURL} size={110} bgColor="#ffffff" fgColor="#0f172a" />
                 </div>
               </div>
             </div>
