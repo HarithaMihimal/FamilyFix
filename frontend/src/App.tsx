@@ -34,7 +34,7 @@ function App() {
   const accessAddress = `${accessHost}:${accessPort}`;
   const [session, setSession] = useState<Answer | null>(null);
   const [movies, setMovies] = useState<Movie[]>([]);
-  const [network, setNetwork] = useState<{ local_server?: string; urls?: string[] } | null>(null);
+  const [network, setNetwork] = useState<{ local_server?: string; urls?: string[]; active_devices?: number } | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sessionError, setSessionError] = useState<string | null>(null);
@@ -81,15 +81,31 @@ function App() {
 
   useEffect(() => {
     void checkSession();
-    fetch('/api/network')
-      .then((res) => {
-        if (!res.ok) {
-          throw new Error(`Network info request failed with status ${res.status}`);
+
+    let active = true;
+    const fetchNetwork = async () => {
+      try {
+        const response = await fetch('/api/network');
+        if (!response.ok) {
+          throw new Error(`Network info request failed with status ${response.status}`);
         }
-        return res.json();
-      })
-      .then((data) => setNetwork(data))
-      .catch(() => setNetwork({ local_server: 'http://127.0.0.1:3000' }));
+        const data = await response.json();
+        if (active) {
+          setNetwork(data);
+        }
+      } catch {
+        if (active) {
+          setNetwork(null);
+        }
+      }
+    };
+
+    void fetchNetwork();
+    const interval = window.setInterval(() => void fetchNetwork(), 15000);
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+    };
   }, []);
 
   const handleLogin = async (formData: FormData) => {
@@ -233,7 +249,7 @@ function App() {
         <section className="mt-10 grid gap-6 lg:grid-cols-3">
           <StatCard icon={<Tv size={18} />} title="Movies" value={String(movies.length)} subtitle="Available in the library" />
           <StatCard icon={<User size={18} />} title="Account" value={session.user?.username ?? 'Admin'} subtitle={session.user?.role ?? 'admin'} />
-          <StatCard icon={<Download size={18} />} title="Network" value={network?.urls?.length ? String(network.urls.length) : '1'} subtitle="Devices on the local network" />
+          <StatCard icon={<Download size={18} />} title="Network" value={network?.active_devices == null ? '—' : String(network.active_devices)} subtitle="Devices active in the last 2 minutes" />
         </section>
 
         <section className="mt-10 rounded-2xl border border-slate-800 bg-slate-900/80 p-5">

@@ -31,16 +31,17 @@ type Folder struct {
 }
 
 type NetworkInfo struct {
-	Host        string   `json:"host"`
-	Port        int      `json:"port"`
-	URLs        []string `json:"urls"`
-	Interfaces  []string `json:"interfaces"`
-	LocalServer string   `json:"local_server"`
+	Host          string   `json:"host"`
+	Port          int      `json:"port"`
+	URLs          []string `json:"urls"`
+	Interfaces    []string `json:"interfaces"`
+	LocalServer   string   `json:"local_server"`
+	ActiveDevices int      `json:"active_devices"`
 }
 
 type WatchProgress struct {
-	MovieID int64  `json:"movie_id"`
-	UserID  int64  `json:"user_id"`
-	Position float64 `json:"position"`
-	UpdatedAt string `json:"updated_at"`
+	MovieID   int64   `json:"movie_id"`
+	UserID    int64   `json:"user_id"`
+	Position  float64 `json:"position"`
+	UpdatedAt string  `json:"updated_at"`
 }

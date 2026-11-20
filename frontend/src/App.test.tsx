@@ -56,13 +56,14 @@ describe('FamilyFlix app', () => {
           }],
         };
       }
-      return { ok: true, json: async () => ({ local_server: 'http://localhost:3000' }) };
+      return { ok: true, json: async () => ({ local_server: 'http://localhost:3000', active_devices: 3 }) };
     }));
 
     render(<App />);
     fireEvent.click(await screen.findByRole('button', { name: 'Play Sample Movie' }));
 
     expect(await screen.findByRole('dialog')).toBeInTheDocument();
+    expect(screen.getByText('3')).toBeInTheDocument();
     expect(screen.getByLabelText('Sample Movie')).toHaveAttribute('src', '/api/movies/7/stream');
     expect(screen.getByRole('link', { name: 'Download instead' })).toHaveAttribute('href', '/api/movies/7/download');
   });

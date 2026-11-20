@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"familyflix/internal/auth"
 	"familyflix/internal/config"
@@ -50,6 +52,8 @@ func main() {
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
 	r.Use(allowLocalNetwork)
+	devices := newDeviceTracker()
+	r.Use(devices.middleware)
 
 	r.Get("/api/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -58,6 +62,7 @@ func main() {
 
 	r.Get("/api/network", func(w http.ResponseWriter, r *http.Request) {
 		info := detectNetworkInfo(cfg.Port)
+		info.ActiveDevices = devices.count(time.Now())
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(info)
 	})
@@ -294,6 +299,65 @@ func main() {
 	if err := http.ListenAndServe(addr, r); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatal(err)
 	}
+}
+
+const activeDeviceWindow = 2 * time.Minute
+
+type deviceTracker struct {
+	mu       sync.Mutex
+	lastSeen map[string]time.Time
+}
+
+func newDeviceTracker() *deviceTracker {
+	return &deviceTracker{lastSeen: make(map[string]time.Time)}
+}
+
+func (d *deviceTracker) middleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if ip := requestClientIP(r); ip != "" {
+			d.mu.Lock()
+			d.lastSeen[ip] = time.Now()
+			d.mu.Unlock()
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func (d *deviceTracker) count(now time.Time) int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	count := 0
+	for ip, lastSeen := range d.lastSeen {
+		if now.Sub(lastSeen) > activeDeviceWindow {
+			delete(d.lastSeen, ip)
+			continue
+		}
+		count++
+	}
+	return count
+}
+
+func requestClientIP(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return ""
+	}
+
+	if ip.IsLoopback() {
+		forwardedAddresses := strings.Split(r.Header.Get("X-Forwarded-For"), ",")
+		for i := len(forwardedAddresses) - 1; i >= 0; i-- {
+			forwardedIP := net.ParseIP(strings.TrimSpace(forwardedAddresses[i]))
+			if forwardedIP != nil {
+				return forwardedIP.String()
+			}
+		}
+	}
+	return ip.String()
 }
 
 func allowLocalNetwork(next http.Handler) http.Handler {
