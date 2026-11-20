@@ -52,4 +52,37 @@ func TestScanFolderIndexesMoviesRecursivelyWithoutDuplicates(t *testing.T) {
 	if len(movies) != 1 {
 		t.Fatalf("database contains %d movies, want 1", len(movies))
 	}
+
+	if err := os.Remove(moviePath); err != nil {
+		t.Fatal(err)
+	}
+	newMoviePath := filepath.Join(root, "New Arrival.mp4")
+	if err := os.WriteFile(newMoviePath, []byte("new video"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	imported, err = store.ScanFolder(root)
+	if err != nil {
+		t.Fatalf("refresh scan failed: %v", err)
+	}
+	if len(imported) != 1 || imported[0].FilePath != newMoviePath {
+		t.Fatalf("refresh imported %#v, want only %q", imported, newMoviePath)
+	}
+	movies, err = store.ListMovies()
+	if err != nil {
+		t.Fatalf("list movies after refresh failed: %v", err)
+	}
+	if len(movies) != 1 || movies[0].FilePath != newMoviePath {
+		t.Fatalf("database after refresh contains %#v, want only %q", movies, newMoviePath)
+	}
+
+	if _, err := store.ScanFolder(filepath.Join(root, "missing-folder")); err == nil {
+		t.Fatal("expected scan of missing folder to fail")
+	}
+	movies, err = store.ListMovies()
+	if err != nil {
+		t.Fatalf("list movies after failed scan failed: %v", err)
+	}
+	if len(movies) != 1 || movies[0].FilePath != newMoviePath {
+		t.Fatalf("failed scan changed movie list: %#v", movies)
+	}
 }

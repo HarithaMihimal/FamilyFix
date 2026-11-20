@@ -309,6 +309,7 @@ func (d *DB) ScanFolder(rootPath string) ([]models.Movie, error) {
 	defer d.scanMu.Unlock()
 
 	movies := make([]models.Movie, 0)
+	scannedPaths := make(map[string]struct{})
 	err = filepath.WalkDir(rootPath, func(fullPath string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -330,6 +331,7 @@ func (d *DB) ScanFolder(rootPath string) ([]models.Movie, error) {
 			Genre:       "Uncategorized",
 			Description: "Imported from local library",
 		}
+		scannedPaths[movie.FilePath] = struct{}{}
 
 		var existingID int64
 		err = d.QueryRow("SELECT id FROM movies WHERE file_path = ? LIMIT 1", movie.FilePath).Scan(&existingID)
@@ -351,5 +353,63 @@ func (d *DB) ScanFolder(rootPath string) ([]models.Movie, error) {
 	if err != nil {
 		return nil, fmt.Errorf("scan movie folder %s: %w", rootPath, err)
 	}
+	if err := d.removeMissingMovies(rootPath, scannedPaths); err != nil {
+		return nil, fmt.Errorf("remove missing movies from %s: %w", rootPath, err)
+	}
 	return movies, nil
+}
+
+func (d *DB) removeMissingMovies(rootPath string, scannedPaths map[string]struct{}) error {
+	rows, err := d.Query("SELECT id, file_path FROM movies")
+	if err != nil {
+		return err
+	}
+	type storedMovie struct {
+		id       int64
+		filePath string
+	}
+	missing := make([]storedMovie, 0)
+	for rows.Next() {
+		var movie storedMovie
+		if err := rows.Scan(&movie.id, &movie.filePath); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		if _, exists := scannedPaths[filepath.Clean(movie.filePath)]; exists {
+			continue
+		}
+		absolutePath, err := filepath.Abs(movie.filePath)
+		if err != nil {
+			_ = rows.Close()
+			return err
+		}
+		relativePath, err := filepath.Rel(rootPath, absolutePath)
+		if err != nil || relativePath == "." || relativePath == ".." ||
+			strings.HasPrefix(relativePath, ".."+string(filepath.Separator)) || filepath.IsAbs(relativePath) {
+			continue
+		}
+		missing = append(missing, movie)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+
+	tx, err := d.Begin()
+	if err != nil {
+		return err
+	}
+	for _, movie := range missing {
+		if _, err := tx.Exec("DELETE FROM movies WHERE id = ?", movie.id); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+	}
+	return tx.Commit()
 }
