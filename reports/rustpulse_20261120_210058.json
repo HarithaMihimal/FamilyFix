@@ -1,0 +1,21 @@
+{
+  "timestamp": "2026-11-20T21:00:58.086072600+00:00",
+  "target": "http://192.168.8.173:5173",
+  "method": "GET",
+  "total_requests": 1000,
+  "successful_requests": 1000,
+  "failed_requests": 0,
+  "success_rate": 100.0,
+  "duration_seconds": 1.0224813,
+  "requests_per_second": 978.0129964235043,
+  "average_latency_ms": 50.01434169999998,
+  "min_latency_ms": 30.139300000000002,
+  "max_latency_ms": 84.65599999999999,
+  "p50_latency_ms": 49.137800000000006,
+  "p95_latency_ms": 64.8049,
+  "p99_latency_ms": 70.4523,
+  "status_codes": {
+    "200": 1000
+  },
+  "errors": []
+}

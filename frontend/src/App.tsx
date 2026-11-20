@@ -28,7 +28,10 @@ const formatBytes = (bytes: number) => {
 };
 
 function App() {
-  const accessURL = window.location.origin;
+  const accessHost = '192.168.8.173';
+  const accessPort = '5173';
+  const accessURL = `http://${accessHost}:${accessPort}`;
+  const accessAddress = `${accessHost}:${accessPort}`;
   const [session, setSession] = useState<Answer | null>(null);
   const [movies, setMovies] = useState<Movie[]>([]);
   const [network, setNetwork] = useState<{ local_server?: string; urls?: string[] } | null>(null);
@@ -155,7 +158,7 @@ function App() {
 
   if (!session.authenticated) {
     return (
-      <LoginScreen onSubmit={handleLogin} loading={loading} error={error} accessURL={accessURL} />
+      <LoginScreen onSubmit={handleLogin} loading={loading} error={error} accessURL={accessURL} accessAddress={accessAddress} />
     );
   }
 
@@ -220,7 +223,7 @@ function App() {
                 <div className="mb-3 flex items-center justify-center rounded-lg bg-white p-2">
                   <QRCodeSVG value={accessURL} size={110} bgColor="#ffffff" fgColor="#0f172a" />
                 </div>
-                <p className="break-all font-mono text-lg font-bold text-white">{accessURL}</p>
+                <p className="break-all font-mono text-lg font-bold text-white">{accessAddress}</p>
                 <p className="mt-2 text-sm text-slate-300">Scan to open this exact address on your phone. Both devices must be on the same Wi‑Fi.</p>
               </div>
             </div>
@@ -342,7 +345,7 @@ function App() {
   );
 }
 
-function LoginScreen({ onSubmit, loading, error, accessURL }: { onSubmit: (formData: FormData) => void; loading: boolean; error: string | null; accessURL: string;}) {
+function LoginScreen({ onSubmit, loading, error, accessURL, accessAddress }: { onSubmit: (formData: FormData) => void; loading: boolean; error: string | null; accessURL: string; accessAddress: string;}) {
   return (
     <div className="flex min-h-screen items-center justify-center bg-slate-950 px-4 text-slate-100">
       <div className="grid w-full max-w-6xl gap-6 overflow-hidden rounded-3xl border border-slate-800 bg-slate-900/80 shadow-2xl shadow-cyan-950/30 lg:grid-cols-[1.1fr_0.9fr]">
@@ -360,7 +363,7 @@ function LoginScreen({ onSubmit, loading, error, accessURL }: { onSubmit: (formD
               <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Open on your phone</p>
-                  <p className="mt-2 break-all font-mono text-lg text-white">{accessURL}</p>
+                  <p className="mt-2 break-all font-mono text-lg text-white">{accessAddress}</p>
                   <p className="mt-2 text-sm text-slate-300">Scan this code or enter the address on a device connected to the same Wi‑Fi.</p>
                 </div>
                 <div className="flex items-center justify-center rounded-2xl border border-slate-700 bg-white p-2 shadow-lg shadow-cyan-950/20">

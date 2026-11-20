@@ -22,6 +22,7 @@ describe('FamilyFlix app', () => {
     render(<App />);
     expect(await screen.findByText(/Sign in to FamilyFlix/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /sign in/i })).toBeInTheDocument();
+    expect(screen.getByText('192.168.8.173:5173')).toBeInTheDocument();
   });
 
   it('shows a retry option when the backend cannot be reached', async () => {

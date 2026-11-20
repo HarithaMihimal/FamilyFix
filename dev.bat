@@ -24,5 +24,5 @@ start "FamilyFix Backend" /D "%ROOT%backend" cmd /k "go run ."
 start "FamilyFix Frontend" /D "%ROOT%frontend" cmd /k "npm run dev"
 
 echo FamilyFix is starting.
-echo Frontend: http://localhost:5173
+echo Frontend: http://192.168.8.173:5173
 echo Backend:  http://localhost:3000
