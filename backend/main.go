@@ -214,6 +214,21 @@ func main() {
 			media.DownloadMovie(w, r, movie.FilePath)
 		})
 
+		r.With(auth.RequireAuth(database)).Get("/progress", func(w http.ResponseWriter, r *http.Request) {
+			user, err := auth.CurrentUser(r, database)
+			if err != nil {
+				http.Error(w, "Unauthorized", http.StatusUnauthorized)
+				return
+			}
+			progress, err := database.GetWatchProgress(user.ID)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(progress)
+		})
+
 		r.With(auth.RequireAuth(database)).Post("/movies/{id}/progress", func(w http.ResponseWriter, r *http.Request) {
 			id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 			if err != nil {

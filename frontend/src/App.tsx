@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Film, LogIn, Search, Shield, Tv, FolderOpen, Download, Clock3, Play, User, Server, QrCode } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 
@@ -11,6 +11,13 @@ interface Movie {
   genre: string;
   format: string;
   file_size: number;
+}
+
+interface WatchProgress {
+  movie_id: number;
+  user_id: number;
+  position: number;
+  updated_at: string;
 }
 
 interface Answer {
@@ -35,6 +42,7 @@ function App() {
   const [session, setSession] = useState<Answer | null>(null);
   const [movies, setMovies] = useState<Movie[]>([]);
   const [myList, setMyList] = useState<Movie[]>([]);
+  const [watchProgress, setWatchProgress] = useState<WatchProgress[]>([]);
   const [network, setNetwork] = useState<{ local_server?: string; urls?: string[]; active_devices?: number } | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -43,6 +51,7 @@ function App() {
   const [libraryError, setLibraryError] = useState<string | null>(null);
   const [playingMovie, setPlayingMovie] = useState<Movie | null>(null);
   const [myListBusy, setMyListBusy] = useState(false);
+  const lastProgressSaveRef = useRef<Record<number, number>>({});
 
   const fetchMovies = async () => {
     const response = await fetch('/api/movies', { credentials: 'include' });
@@ -66,6 +75,19 @@ function App() {
     }
   };
 
+  const fetchWatchProgress = async () => {
+    try {
+      const response = await fetch('/api/progress', { credentials: 'include' });
+      if (!response.ok) {
+        throw new Error(`Could not load watch progress (server returned ${response.status})`);
+      }
+      const data = await response.json();
+      setWatchProgress(Array.isArray(data) ? data : []);
+    } catch {
+      setWatchProgress([]);
+    }
+  };
+
   const fetchSession = async () => {
     const response = await fetch('/api/session', { credentials: 'include' });
     if (response.status === 401) {
@@ -81,7 +103,7 @@ function App() {
     setSession(data);
     setSessionError(null);
     if (data.authenticated) {
-      await Promise.all([fetchMovies(), fetchMyList()]);
+      await Promise.all([fetchMovies(), fetchMyList(), fetchWatchProgress()]);
     }
   };
 
@@ -152,6 +174,8 @@ function App() {
     setSession({ authenticated: false });
     setMovies([]);
     setMyList([]);
+    setWatchProgress([]);
+    lastProgressSaveRef.current = {};
   };
 
   const refreshLibrary = async () => {
@@ -170,6 +194,52 @@ function App() {
     () => (featured ? myList.some((movie) => movie.id === featured.id) : false),
     [featured, myList],
   );
+  const continueWatchingMovies = useMemo(() => {
+    const progressByMovieId = new Map(watchProgress.map((item) => [item.movie_id, item.position]));
+    return movies.filter((movie) => (progressByMovieId.get(movie.id) ?? 0) > 0);
+  }, [movies, watchProgress]);
+
+  const getSavedPosition = (movieId: number) => watchProgress.find((item) => item.movie_id === movieId)?.position ?? 0;
+
+  const scrollToSection = (id: string) => {
+    const target = document.getElementById(id);
+    if (target) {
+      target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } else if (id === 'home') {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  };
+
+  const saveMovieProgress = async (movieId: number, position: number, force = false) => {
+    if (!Number.isFinite(position) || position < 0) return;
+    const roundedPosition = Math.floor(position);
+    const lastSaved = lastProgressSaveRef.current[movieId] ?? -1;
+    if (!force && Math.abs(roundedPosition - lastSaved) < 10) return;
+    lastProgressSaveRef.current[movieId] = roundedPosition;
+    try {
+      const response = await fetch(`/api/movies/${movieId}/progress`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ position: roundedPosition }),
+      });
+      if (!response.ok) {
+        throw new Error(`Could not save progress (server returned ${response.status})`);
+      }
+      setWatchProgress((current) => {
+        const updatedAt = new Date().toISOString();
+        const existingIndex = current.findIndex((item) => item.movie_id === movieId);
+        if (existingIndex === -1) {
+          return [{ movie_id: movieId, user_id: 0, position: roundedPosition, updated_at: updatedAt }, ...current];
+        }
+        const next = [...current];
+        next[existingIndex] = { ...next[existingIndex], position: roundedPosition, updated_at: updatedAt };
+        return next;
+      });
+    } catch {
+      // Ignore transient progress save failures to avoid interrupting playback.
+    }
+  };
 
   const toggleFeaturedMyList = async () => {
     if (!featured) return;
@@ -219,7 +289,7 @@ function App() {
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
-      <header className="border-b border-slate-800 bg-slate-950/80 backdrop-blur">
+      <header className="sticky top-0 z-40 border-b border-slate-800 bg-slate-950/80 backdrop-blur">
         <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
           <div className="flex items-center gap-3">
             <div className="rounded-xl bg-cyan-500/20 p-2 text-cyan-300"><Film size={22} /></div>
@@ -228,11 +298,47 @@ function App() {
               <p className="text-xs text-slate-400">Private local Wi-Fi library</p>
             </div>
           </div>
-          <nav className="hidden items-center gap-5 text-sm text-slate-300 md:flex">
-            <a href="#" className="flex items-center gap-2 hover:text-white"><Search size={16} />Home</a>
-            <a href="#" className="flex items-center gap-2 hover:text-white"><FolderOpen size={16} />Movies</a>
-            <a href="#" className="flex items-center gap-2 hover:text-white"><Clock3 size={16} />Continue Watching</a>
-            <a href="#" className="flex items-center gap-2 hover:text-white"><Download size={16} />Downloads</a>
+          <nav className="hidden items-center gap-5 text-sm text-slate-300 md:flex" aria-label="Primary">
+            <a
+              href="#home"
+              onClick={(e) => {
+                e.preventDefault();
+                scrollToSection('home');
+              }}
+              className="flex items-center gap-2 hover:text-white"
+            >
+              <Search size={16} />Home
+            </a>
+            <a
+              href="#movies"
+              onClick={(e) => {
+                e.preventDefault();
+                scrollToSection('movies');
+              }}
+              className="flex items-center gap-2 hover:text-white"
+            >
+              <FolderOpen size={16} />Movies
+            </a>
+            <a
+              href="#continue-watching"
+              onClick={(e) => {
+                e.preventDefault();
+                scrollToSection('continue-watching');
+              }}
+              className="flex items-center gap-2 hover:text-white"
+            >
+              <Clock3 size={16} />Continue Watching
+            </a>
+            <a
+              href="#movies"
+              onClick={(e) => {
+                e.preventDefault();
+                scrollToSection('movies');
+              }}
+              className="flex items-center gap-2 hover:text-white"
+            >
+              <Download size={16} />Downloads
+            </a>
           </nav>
           <button onClick={handleLogout} className="rounded-full border border-slate-700 px-4 py-2 text-sm text-slate-200 hover:border-cyan-500 hover:text-white">
             Sign out
@@ -241,7 +347,7 @@ function App() {
       </header>
 
       <main className="mx-auto max-w-7xl px-6 py-8">
-        <section className="relative overflow-hidden rounded-3xl border border-slate-800 bg-gradient-to-r from-cyan-950/60 via-slate-900 to-slate-950 p-8 shadow-glow">
+        <section id="home" className="relative overflow-hidden rounded-3xl border border-slate-800 bg-gradient-to-r from-cyan-950/60 via-slate-900 to-slate-950 p-8 shadow-glow">
           <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(34,211,238,0.24),transparent_35%)]" />
           <div className="relative flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
             <div className="max-w-2xl">
@@ -316,6 +422,53 @@ function App() {
           </div>
         </section>
 
+        <section id="continue-watching" className="mt-10">
+          <div className="mb-6 flex items-center justify-between">
+            <h2 className="text-2xl font-bold text-white">Continue Watching</h2>
+            <span className="text-sm text-slate-400">{continueWatchingMovies.length} in progress</span>
+          </div>
+          {continueWatchingMovies.length === 0 ? (
+            <p className="text-sm text-slate-400">Movies you start watching will appear here so you can resume them later.</p>
+          ) : (
+            <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-4">
+              {continueWatchingMovies.map((movie) => {
+                const position = getSavedPosition(movie.id);
+                return (
+                  <div key={`continue-${movie.id}`} className="group overflow-hidden rounded-2xl border border-slate-800 bg-slate-900/80 transition hover:-translate-y-1 hover:border-cyan-500/50 hover:shadow-lg hover:shadow-cyan-500/10">
+                    <div className="aspect-[3/4] bg-gradient-to-br from-slate-700 to-slate-900 p-3">
+                      <div className="flex h-full items-end justify-between rounded-xl border border-slate-700 bg-[radial-gradient(circle_at_top,rgba(34,211,238,0.22),transparent_35%),linear-gradient(135deg,#0f172a,#111827)] p-4">
+                        <span className="rounded-full bg-slate-950/75 px-2 py-1 text-xs uppercase tracking-wide text-cyan-300">{movie.format}</span>
+                        <span className="rounded-full bg-slate-950/75 px-2 py-1 text-xs text-slate-200">{Math.floor(position / 60)}m watched</span>
+                      </div>
+                    </div>
+                    <div className="space-y-3 p-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <h3 className="text-lg font-semibold text-white">{movie.title}</h3>
+                          <p className="text-sm text-slate-400">{movie.genre}</p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setPlayingMovie(movie)}
+                          className="rounded-full border border-slate-700 p-2 text-slate-200 hover:border-cyan-500 hover:text-cyan-300"
+                          aria-label={`Resume ${movie.title}`}
+                        >
+                          <Play size={15} />
+                        </button>
+                      </div>
+                      <p className="line-clamp-3 text-sm text-slate-400">{movie.description || 'No description yet.'}</p>
+                      <div className="flex items-center justify-between text-xs text-slate-400">
+                        <span>Resume from {Math.floor(position / 60)}:{String(Math.floor(position % 60)).padStart(2, '0')}</span>
+                        <a href={`/api/movies/${movie.id}/download`} className="font-medium text-cyan-300 hover:text-cyan-200">Download</a>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </section>
+
         <section id="my-list" className="mt-10">
           <div className="mb-6 flex items-center justify-between">
             <h2 className="text-2xl font-bold text-white">My List</h2>
@@ -380,7 +533,7 @@ function App() {
           )}
         </section>
 
-        <section className="mt-10">
+        <section id="movies" className="mt-10">
           <div className="mb-6 flex items-center justify-between">
             <h2 className="text-2xl font-bold text-white">Recently added</h2>
             <div className="flex items-center gap-4">
@@ -458,6 +611,21 @@ function App() {
               autoPlay
               playsInline
               aria-label={playingMovie.title}
+              onLoadedMetadata={(e) => {
+                const savedPosition = getSavedPosition(playingMovie.id);
+                if (savedPosition > 0) {
+                  e.currentTarget.currentTime = savedPosition;
+                }
+              }}
+              onTimeUpdate={(e) => {
+                void saveMovieProgress(playingMovie.id, e.currentTarget.currentTime);
+              }}
+              onPause={(e) => {
+                void saveMovieProgress(playingMovie.id, e.currentTarget.currentTime, true);
+              }}
+              onEnded={() => {
+                void saveMovieProgress(playingMovie.id, 0, true);
+              }}
             >
               Your browser can’t play this video format. Try downloading the file instead.
             </video>
