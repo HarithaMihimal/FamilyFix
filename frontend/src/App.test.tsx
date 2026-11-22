@@ -107,17 +107,17 @@ describe('FamilyFlix app', () => {
 
     render(<App />);
 
-    const addButton = await screen.findByRole('button', { name: /^My List$/i });
+    const addButton = await screen.findByRole('button', { name: /^Watch later$/i });
     fireEvent.click(addButton);
 
-    expect(await screen.findByRole('button', { name: /Remove from My List/i })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: /Saved to My List/i })).toBeInTheDocument();
     const myListSection = document.getElementById('my-list');
     expect(myListSection).not.toBeNull();
     expect(within(myListSection as HTMLElement).getByRole('heading', { name: 'My List' })).toBeInTheDocument();
     expect(within(myListSection as HTMLElement).getByText('Sample Movie')).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: /Remove from My List/i }));
-    expect(await screen.findByRole('button', { name: /^My List$/i })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Saved to My List/i }));
+    expect(await screen.findByRole('button', { name: /^Watch later$/i })).toBeInTheDocument();
     expect(within(myListSection as HTMLElement).getByText(/Save movies here to watch them later/i)).toBeInTheDocument();
   });
 });

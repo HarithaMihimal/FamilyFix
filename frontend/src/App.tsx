@@ -190,8 +190,9 @@ function App() {
   };
 
   const featured = useMemo(() => movies[0] ?? null, [movies]);
+  const isMovieInMyList = (movieId: number) => myList.some((movie) => movie.id === movieId);
   const featuredInMyList = useMemo(
-    () => (featured ? myList.some((movie) => movie.id === featured.id) : false),
+    () => (featured ? isMovieInMyList(featured.id) : false),
     [featured, myList],
   );
   const continueWatchingMovies = useMemo(() => {
@@ -241,12 +242,12 @@ function App() {
     }
   };
 
-  const toggleFeaturedMyList = async () => {
-    if (!featured) return;
+  const toggleMovieInMyList = async (movieId: number) => {
+    const inList = myList.some((movie) => movie.id === movieId);
     setMyListBusy(true);
     try {
-      const response = await fetch(`/api/my-list/${featured.id}`, {
-        method: featuredInMyList ? 'DELETE' : 'POST',
+      const response = await fetch(`/api/my-list/${movieId}`, {
+        method: inList ? 'DELETE' : 'POST',
         credentials: 'include',
       });
       if (!response.ok) {
@@ -258,6 +259,11 @@ function App() {
     } finally {
       setMyListBusy(false);
     }
+  };
+
+  const toggleFeaturedMyList = async () => {
+    if (!featured) return;
+    await toggleMovieInMyList(featured.id);
   };
 
   if (!session) {
@@ -378,7 +384,7 @@ function App() {
                   onClick={() => void toggleFeaturedMyList()}
                   className="rounded-full border border-slate-700 px-5 py-3 font-semibold text-white hover:border-cyan-500 hover:text-cyan-300 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  {myListBusy ? 'Saving...' : featuredInMyList ? 'Remove from My List' : 'My List'}
+                  {myListBusy ? 'Saving...' : featuredInMyList ? 'Saved to My List' : 'Watch later'}
                 </button>
               </div>
             </div>
@@ -457,9 +463,20 @@ function App() {
                         </button>
                       </div>
                       <p className="line-clamp-3 text-sm text-slate-400">{movie.description || 'No description yet.'}</p>
-                      <div className="flex items-center justify-between text-xs text-slate-400">
+                      <div className="flex items-center justify-between gap-3 text-xs text-slate-400">
                         <span>Resume from {Math.floor(position / 60)}:{String(Math.floor(position % 60)).padStart(2, '0')}</span>
-                        <a href={`/api/movies/${movie.id}/download`} className="font-medium text-cyan-300 hover:text-cyan-200">Download</a>
+                        <div className="flex items-center gap-3">
+                          <button
+                            type="button"
+                            onClick={() => void toggleMovieInMyList(movie.id)}
+                            disabled={myListBusy}
+                            className="font-medium text-cyan-300 hover:text-cyan-200 disabled:opacity-60"
+                            aria-label={isMovieInMyList(movie.id) ? `Remove ${movie.title} from My List` : `Save ${movie.title} for watch later`}
+                          >
+                            {isMovieInMyList(movie.id) ? 'Saved' : 'Watch later'}
+                          </button>
+                          <a href={`/api/movies/${movie.id}/download`} className="font-medium text-cyan-300 hover:text-cyan-200">Download</a>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -579,8 +596,16 @@ function App() {
                     </button>
                   </div>
                   <p className="line-clamp-3 text-sm text-slate-400">{movie.description || 'No description yet.'}</p>
-                  <div className="flex items-center justify-between text-xs text-slate-400">
-                    <span>{movie.file_name}</span>
+                  <div className="flex items-center justify-between gap-3 text-xs text-slate-400">
+                    <button
+                      type="button"
+                      onClick={() => void toggleMovieInMyList(movie.id)}
+                      disabled={myListBusy}
+                      className="font-medium text-cyan-300 hover:text-cyan-200 disabled:opacity-60"
+                      aria-label={isMovieInMyList(movie.id) ? `Remove ${movie.title} from My List` : `Save ${movie.title} for watch later`}
+                    >
+                      {isMovieInMyList(movie.id) ? 'Saved' : 'Watch later'}
+                    </button>
                     <a href={`/api/movies/${movie.id}/download`} className="font-medium text-cyan-300 hover:text-cyan-200">Download</a>
                   </div>
                 </div>
