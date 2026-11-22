@@ -238,6 +238,57 @@ func main() {
 			}
 			w.WriteHeader(http.StatusNoContent)
 		})
+
+		r.With(auth.RequireAuth(database)).Get("/my-list", func(w http.ResponseWriter, r *http.Request) {
+			user, err := auth.CurrentUser(r, database)
+			if err != nil {
+				http.Error(w, "Unauthorized", http.StatusUnauthorized)
+				return
+			}
+			movies, err := database.ListMyListMovies(user.ID)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(movies)
+		})
+
+		r.With(auth.RequireAuth(database)).Post("/my-list/{id}", func(w http.ResponseWriter, r *http.Request) {
+			id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+			if err != nil {
+				http.Error(w, "Invalid movie id", http.StatusBadRequest)
+				return
+			}
+			user, err := auth.CurrentUser(r, database)
+			if err != nil {
+				http.Error(w, "Unauthorized", http.StatusUnauthorized)
+				return
+			}
+			if err := database.AddToMyList(user.ID, id); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+		})
+
+		r.With(auth.RequireAuth(database)).Delete("/my-list/{id}", func(w http.ResponseWriter, r *http.Request) {
+			id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+			if err != nil {
+				http.Error(w, "Invalid movie id", http.StatusBadRequest)
+				return
+			}
+			user, err := auth.CurrentUser(r, database)
+			if err != nil {
+				http.Error(w, "Unauthorized", http.StatusUnauthorized)
+				return
+			}
+			if err := database.RemoveFromMyList(user.ID, id); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+		})
 	})
 
 	r.With(auth.RequireAdmin(database)).Post("/api/scans", func(w http.ResponseWriter, r *http.Request) {

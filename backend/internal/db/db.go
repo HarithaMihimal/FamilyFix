@@ -78,6 +78,12 @@ func (d *DB) InitSchema() error {
 			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			PRIMARY KEY (movie_id, user_id)
 		);`,
+		`CREATE TABLE IF NOT EXISTS my_list (
+			user_id INTEGER NOT NULL,
+			movie_id INTEGER NOT NULL,
+			added_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (user_id, movie_id)
+		);`,
 	}
 	for _, q := range queries {
 		if _, err := d.Exec(q); err != nil {
@@ -275,6 +281,44 @@ func (d *DB) GetWatchProgress(userID int64) ([]models.WatchProgress, error) {
 		items = append(items, item)
 	}
 	return items, nil
+}
+
+func (d *DB) AddToMyList(userID, movieID int64) error {
+	_, err := d.Exec(
+		"INSERT OR IGNORE INTO my_list (user_id, movie_id, added_at) VALUES (?, ?, ?)",
+		userID,
+		movieID,
+		time.Now().UTC().Format(time.RFC3339),
+	)
+	return err
+}
+
+func (d *DB) RemoveFromMyList(userID, movieID int64) error {
+	_, err := d.Exec("DELETE FROM my_list WHERE user_id = ? AND movie_id = ?", userID, movieID)
+	return err
+}
+
+func (d *DB) ListMyListMovies(userID int64) ([]models.Movie, error) {
+	rows, err := d.Query(`
+		SELECT m.id, m.title, m.file_name, m.file_path, m.poster_url, m.description, m.genre, m.duration, m.resolution, m.format, m.file_size, m.created_at, m.updated_at
+		FROM movies m
+		JOIN my_list ml ON ml.movie_id = m.id
+		WHERE ml.user_id = ?
+		ORDER BY ml.added_at DESC
+	`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	movies := make([]models.Movie, 0)
+	for rows.Next() {
+		var movie models.Movie
+		if err := rows.Scan(&movie.ID, &movie.Title, &movie.FileName, &movie.FilePath, &movie.PosterURL, &movie.Description, &movie.Genre, &movie.Duration, &movie.Resolution, &movie.Format, &movie.FileSize, &movie.CreatedAt, &movie.UpdatedAt); err != nil {
+			return nil, err
+		}
+		movies = append(movies, movie)
+	}
+	return movies, nil
 }
 
 func NormalizeTitle(name string) string {

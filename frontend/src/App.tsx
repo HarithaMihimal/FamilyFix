@@ -34,6 +34,7 @@ function App() {
   const accessAddress = `${accessHost}:${accessPort}`;
   const [session, setSession] = useState<Answer | null>(null);
   const [movies, setMovies] = useState<Movie[]>([]);
+  const [myList, setMyList] = useState<Movie[]>([]);
   const [network, setNetwork] = useState<{ local_server?: string; urls?: string[]; active_devices?: number } | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -41,6 +42,7 @@ function App() {
   const [refreshingLibrary, setRefreshingLibrary] = useState(false);
   const [libraryError, setLibraryError] = useState<string | null>(null);
   const [playingMovie, setPlayingMovie] = useState<Movie | null>(null);
+  const [myListBusy, setMyListBusy] = useState(false);
 
   const fetchMovies = async () => {
     const response = await fetch('/api/movies', { credentials: 'include' });
@@ -49,6 +51,19 @@ function App() {
     }
     setMovies(await response.json());
     setLibraryError(null);
+  };
+
+  const fetchMyList = async () => {
+    try {
+      const response = await fetch('/api/my-list', { credentials: 'include' });
+      if (!response.ok) {
+        throw new Error(`Could not load My List (server returned ${response.status})`);
+      }
+      const data = await response.json();
+      setMyList(Array.isArray(data) ? data : []);
+    } catch {
+      setMyList([]);
+    }
   };
 
   const fetchSession = async () => {
@@ -66,7 +81,7 @@ function App() {
     setSession(data);
     setSessionError(null);
     if (data.authenticated) {
-      await fetchMovies();
+      await Promise.all([fetchMovies(), fetchMyList()]);
     }
   };
 
@@ -136,6 +151,7 @@ function App() {
     await fetch('/api/logout', { method: 'POST', credentials: 'include' });
     setSession({ authenticated: false });
     setMovies([]);
+    setMyList([]);
   };
 
   const refreshLibrary = async () => {
@@ -150,6 +166,29 @@ function App() {
   };
 
   const featured = useMemo(() => movies[0] ?? null, [movies]);
+  const featuredInMyList = useMemo(
+    () => (featured ? myList.some((movie) => movie.id === featured.id) : false),
+    [featured, myList],
+  );
+
+  const toggleFeaturedMyList = async () => {
+    if (!featured) return;
+    setMyListBusy(true);
+    try {
+      const response = await fetch(`/api/my-list/${featured.id}`, {
+        method: featuredInMyList ? 'DELETE' : 'POST',
+        credentials: 'include',
+      });
+      if (!response.ok) {
+        throw new Error(`Could not update My List (server returned ${response.status})`);
+      }
+      await fetchMyList();
+    } catch (err) {
+      setLibraryError(err instanceof Error ? err.message : 'Could not update My List');
+    } finally {
+      setMyListBusy(false);
+    }
+  };
 
   if (!session) {
     if (sessionError) {
@@ -227,7 +266,14 @@ function App() {
                 >
                   <Play size={16} /> Watch now
                 </button>
-                <button className="rounded-full border border-slate-700 px-5 py-3 font-semibold text-white hover:border-slate-500">My List</button>
+                <button
+                  type="button"
+                  disabled={!featured || myListBusy}
+                  onClick={() => void toggleFeaturedMyList()}
+                  className="rounded-full border border-slate-700 px-5 py-3 font-semibold text-white hover:border-cyan-500 hover:text-cyan-300 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {myListBusy ? 'Saving...' : featuredInMyList ? 'Remove from My List' : 'My List'}
+                </button>
               </div>
             </div>
             <div className="rounded-2xl border border-slate-700 bg-slate-900/70 p-4 text-left backdrop-blur">
@@ -268,6 +314,70 @@ function App() {
             <InfoTile label="Security" value="Session protected" detail="Cookie-based access with private admin control" />
             <InfoTile label="Library" value="Auto discovery" detail="Indexes files from the shared media folder" />
           </div>
+        </section>
+
+        <section id="my-list" className="mt-10">
+          <div className="mb-6 flex items-center justify-between">
+            <h2 className="text-2xl font-bold text-white">My List</h2>
+            <span className="text-sm text-slate-400">{myList.length} saved</span>
+          </div>
+          {myList.length === 0 ? (
+            <p className="text-sm text-slate-400">Save movies here to watch them later.</p>
+          ) : (
+            <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-4">
+              {myList.map((movie) => (
+                <div key={`my-list-${movie.id}`} className="group overflow-hidden rounded-2xl border border-slate-800 bg-slate-900/80 transition hover:-translate-y-1 hover:border-cyan-500/50 hover:shadow-lg hover:shadow-cyan-500/10">
+                  <div className="aspect-[3/4] bg-gradient-to-br from-slate-700 to-slate-900 p-3">
+                    <div className="flex h-full items-end justify-between rounded-xl border border-slate-700 bg-[radial-gradient(circle_at_top,rgba(34,211,238,0.22),transparent_35%),linear-gradient(135deg,#0f172a,#111827)] p-4">
+                      <span className="rounded-full bg-slate-950/75 px-2 py-1 text-xs uppercase tracking-wide text-cyan-300">{movie.format}</span>
+                      <span className="rounded-full bg-slate-950/75 px-2 py-1 text-xs text-slate-200">{formatBytes(movie.file_size)}</span>
+                    </div>
+                  </div>
+                  <div className="space-y-3 p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <h3 className="text-lg font-semibold text-white">{movie.title}</h3>
+                        <p className="text-sm text-slate-400">{movie.genre}</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setPlayingMovie(movie)}
+                        className="rounded-full border border-slate-700 p-2 text-slate-200 hover:border-cyan-500 hover:text-cyan-300"
+                        aria-label={`Play ${movie.title}`}
+                      >
+                        <Play size={15} />
+                      </button>
+                    </div>
+                    <p className="line-clamp-3 text-sm text-slate-400">{movie.description || 'No description yet.'}</p>
+                    <div className="flex items-center justify-between text-xs text-slate-400">
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          setMyListBusy(true);
+                          try {
+                            const response = await fetch(`/api/my-list/${movie.id}`, { method: 'DELETE', credentials: 'include' });
+                            if (!response.ok) {
+                              throw new Error(`Could not update My List (server returned ${response.status})`);
+                            }
+                            await fetchMyList();
+                          } catch (err) {
+                            setLibraryError(err instanceof Error ? err.message : 'Could not update My List');
+                          } finally {
+                            setMyListBusy(false);
+                          }
+                        }}
+                        disabled={myListBusy}
+                        className="font-medium text-cyan-300 hover:text-cyan-200 disabled:opacity-60"
+                      >
+                        Remove
+                      </button>
+                      <a href={`/api/movies/${movie.id}/download`} className="font-medium text-cyan-300 hover:text-cyan-200">Download</a>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </section>
 
         <section className="mt-10">
