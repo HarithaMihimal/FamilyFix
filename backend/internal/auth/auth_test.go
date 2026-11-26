@@ -55,6 +55,29 @@ func TestRequireAdminRejectsNormalUsersAndForgedCookies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
+	func TestPendingSignupCannotLogInUntilApproved(t *testing.T) {
+		store, err := db.New(filepath.Join(t.TempDir(), "data"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer store.Close()
+		user, err := store.RegisterUser("pending-user", "pending-pass-123")
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		key := []byte("test-session-signing-key-that-is-long-enough")
+		if err := Login(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/api/login", nil), store, key, user.Username, "pending-pass-123"); err != ErrPendingApproval {
+			t.Fatalf("pending Login() error = %v, want ErrPendingApproval", err)
+		}
+		if approved, err := store.ApproveUser(user.ID); err != nil || !approved {
+			t.Fatalf("approve user = (%v, %v), want (true, nil)", approved, err)
+		}
+		if err := Login(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/api/login", nil), store, key, user.Username, "pending-pass-123"); err != nil {
+			t.Fatalf("login after approval: %v", err)
+		}
+	}
 	defer store.Close()
 	if _, err := store.CreateUser("family-member", "member-pass-123", "user"); err != nil {
 		t.Fatal(err)

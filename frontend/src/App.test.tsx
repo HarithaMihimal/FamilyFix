@@ -23,7 +23,31 @@ describe('FamilyFlix app', () => {
     render(<App />);
     expect(await screen.findByText(/Sign in to FamilyFlix/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /sign in/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /sign up/i })).toBeInTheDocument();
     expect(screen.getByText('192.168.8.173:5173')).toBeInTheDocument();
+  });
+
+  it('submits signups for admin approval', async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url === '/api/session') {
+        return { ok: false, status: 401, json: async () => ({ authenticated: false }) };
+      }
+      if (url === '/api/signup') {
+        return { ok: true, status: 202, json: async () => ({ status: 'pending_approval' }) };
+      }
+      return { ok: true, json: async () => ({ local_server: 'http://localhost:3000' }) };
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /New here\? Sign up/i }));
+    expect(screen.getByRole('heading', { name: 'Create your account' })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Username'), { target: { value: 'new-family-user' } });
+    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'new-family-pass-123' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Request account' }));
+
+    expect(await screen.findByRole('status')).toHaveTextContent(/must approve it before you can sign in/i);
+    expect(fetchMock).toHaveBeenCalledWith('/api/signup', expect.objectContaining({ method: 'POST' }));
   });
 
   it('shows a retry option when the backend cannot be reached', async () => {
@@ -123,7 +147,7 @@ describe('FamilyFlix app', () => {
   });
 
   it('lets admins create normal user accounts', async () => {
-    let users = [{ id: 1, username: 'admin', role: 'admin', created_at: '2026-01-01' }];
+    let users = [{ id: 1, username: 'admin', role: 'admin', approved: true, created_at: '2026-01-01' }];
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
       if (url === '/api/session') {
         return { ok: true, json: async () => ({ authenticated: true, user: { username: 'admin', role: 'admin' } }) };
@@ -132,7 +156,7 @@ describe('FamilyFlix app', () => {
         return { ok: true, json: async () => users };
       }
       if (url === '/api/admin/users' && init?.method === 'POST') {
-        users = [...users, { id: 2, username: 'family-user', role: 'user', created_at: '2026-01-02' }];
+        users = [...users, { id: 2, username: 'family-user', role: 'user', approved: true, created_at: '2026-01-02' }];
         return { ok: true, status: 201, json: async () => users[1] };
       }
       return { ok: true, json: async () => [] };
@@ -160,5 +184,32 @@ describe('FamilyFlix app', () => {
     render(<App />);
     expect(await screen.findByText('family-user')).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: 'User accounts' })).not.toBeInTheDocument();
+    expect(document.querySelector('.user-theme')).not.toBeNull();
+  });
+
+  it('lets admins approve pending users', async () => {
+    let users = [
+      { id: 1, username: 'admin', role: 'admin', approved: true, created_at: '2026-01-01' },
+      { id: 2, username: 'pending-user', role: 'user', approved: false, created_at: '2026-01-02' },
+    ];
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === '/api/session') {
+        return { ok: true, json: async () => ({ authenticated: true, user: { username: 'admin', role: 'admin' } }) };
+      }
+      if (url === '/api/admin/users' && !init?.method) {
+        return { ok: true, json: async () => users };
+      }
+      if (url === '/api/admin/users/2/approve' && init?.method === 'POST') {
+        users = users.map((user) => user.id === 2 ? { ...user, approved: true } : user);
+        return { ok: true, status: 204, json: async () => ({}) };
+      }
+      return { ok: true, json: async () => [] };
+    }));
+
+    render(<App />);
+    expect(await screen.findByText('Pending approval')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Approve pending-user' }));
+    expect(await screen.findByText('Account "pending-user" approved.')).toBeInTheDocument();
+    expect(screen.getByText('user')).toBeInTheDocument();
   });
 });

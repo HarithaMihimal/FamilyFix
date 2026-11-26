@@ -18,6 +18,8 @@ import (
 const sessionCookieName = "familyflix_session"
 const sessionDuration = 24 * time.Hour
 
+var ErrPendingApproval = errors.New("account is pending admin approval")
+
 type Session struct {
 	Username string
 	Role     string
@@ -30,6 +32,9 @@ func Login(w http.ResponseWriter, r *http.Request, database *db.DB, sessionKey [
 	}
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)); err != nil {
 		return errors.New("invalid username or password")
+	}
+	if !user.Approved {
+		return ErrPendingApproval
 	}
 
 	expiresAt := time.Now().Add(sessionDuration)
@@ -59,6 +64,9 @@ func CurrentUser(r *http.Request, database *db.DB, sessionKey []byte) (*models.U
 	user, err := database.GetUserByUsername(username)
 	if err != nil {
 		return nil, err
+	}
+	if !user.Approved {
+		return nil, ErrPendingApproval
 	}
 	return user, nil
 }

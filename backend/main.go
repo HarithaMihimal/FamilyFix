@@ -98,11 +98,50 @@ func main() {
 			return
 		}
 		if err := auth.Login(w, r, database, sessionKey, payload.Username, payload.Password); err != nil {
-			http.Error(w, err.Error(), http.StatusUnauthorized)
+			status := http.StatusUnauthorized
+			if errors.Is(err, auth.ErrPendingApproval) {
+				status = http.StatusForbidden
+			}
+			http.Error(w, err.Error(), status)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	})
+
+	r.Post("/api/signup", func(w http.ResponseWriter, r *http.Request) {
+		var payload struct {
+			Username string `json:"username"`
+			Password string `json:"password"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			http.Error(w, "Invalid signup payload", http.StatusBadRequest)
+			return
+		}
+		payload.Username = strings.TrimSpace(payload.Username)
+		if !validUsername(payload.Username) {
+			http.Error(w, "Username must be 3-32 characters and contain only letters, numbers, dots, underscores, or hyphens", http.StatusBadRequest)
+			return
+		}
+		if len(payload.Password) < 8 || len(payload.Password) > 72 {
+			http.Error(w, "Password must be between 8 and 72 bytes", http.StatusBadRequest)
+			return
+		}
+		if _, err := database.GetUserByUsername(payload.Username); err == nil {
+			http.Error(w, "Username is already taken", http.StatusConflict)
+			return
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			log.Printf("could not check signup username: %v", err)
+			http.Error(w, "Could not check username availability", http.StatusInternalServerError)
+			return
+		}
+		if _, err := database.RegisterUser(payload.Username, payload.Password); err != nil {
+			http.Error(w, "Could not create signup request", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "pending_approval"})
 	})
 
 	r.Post("/api/logout", func(w http.ResponseWriter, r *http.Request) {
@@ -182,6 +221,24 @@ func main() {
 			}
 			if !deleted {
 				http.Error(w, "Normal user not found", http.StatusNotFound)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+		})
+
+		r.With(auth.RequireAdmin(database, sessionKey)).Post("/admin/users/{id}/approve", func(w http.ResponseWriter, r *http.Request) {
+			id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+			if err != nil || id < 1 {
+				http.Error(w, "Invalid user id", http.StatusBadRequest)
+				return
+			}
+			approved, err := database.ApproveUser(id)
+			if err != nil {
+				http.Error(w, "Could not approve user", http.StatusInternalServerError)
+				return
+			}
+			if !approved {
+				http.Error(w, "Pending user not found", http.StatusNotFound)
 				return
 			}
 			w.WriteHeader(http.StatusNoContent)

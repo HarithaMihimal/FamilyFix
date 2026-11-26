@@ -106,6 +106,7 @@ func (d *DB) InitSchema() error {
 			username TEXT UNIQUE NOT NULL,
 			password_hash TEXT NOT NULL,
 			role TEXT NOT NULL DEFAULT 'user',
+			approved INTEGER NOT NULL DEFAULT 1,
 			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 		);`,
 		`CREATE TABLE IF NOT EXISTS movies (
@@ -149,6 +150,7 @@ func (d *DB) InitSchema() error {
 				username VARCHAR(191) NOT NULL UNIQUE,
 				password_hash VARCHAR(255) NOT NULL,
 				role VARCHAR(32) NOT NULL DEFAULT 'user',
+				approved BOOLEAN NOT NULL DEFAULT TRUE,
 				created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 			)`,
 			`CREATE TABLE IF NOT EXISTS movies (
@@ -192,7 +194,54 @@ func (d *DB) InitSchema() error {
 			return err
 		}
 	}
-	return nil
+	return d.ensureUserApprovalColumn()
+}
+
+func (d *DB) ensureUserApprovalColumn() error {
+	if d.driver == "mysql" {
+		var count int
+		err := d.QueryRow(
+			"SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users' AND COLUMN_NAME = 'approved'",
+		).Scan(&count)
+		if err != nil {
+			return err
+		}
+		if count > 0 {
+			return nil
+		}
+		_, err = d.Exec("ALTER TABLE users ADD COLUMN approved BOOLEAN NOT NULL DEFAULT TRUE")
+		return err
+	}
+
+	rows, err := d.Query("PRAGMA table_info(users)")
+	if err != nil {
+		return err
+	}
+	found := false
+	for rows.Next() {
+		var cid, notNull, primaryKey int
+		var name, columnType string
+		var defaultValue sql.NullString
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		if name == "approved" {
+			found = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if found {
+		return nil
+	}
+	_, err = d.Exec("ALTER TABLE users ADD COLUMN approved INTEGER NOT NULL DEFAULT 1")
+	return err
 }
 
 func (d *DB) SeedAdmin() error {
@@ -226,9 +275,9 @@ func (d *DB) SeedAdminWithCredentials(username, password string) error {
 func (d *DB) GetUserByUsername(username string) (*models.User, error) {
 	var user models.User
 	err := d.QueryRow(
-		"SELECT id, username, password_hash, role, created_at FROM users WHERE username = ?",
+		"SELECT id, username, password_hash, role, approved, created_at FROM users WHERE username = ?",
 		username,
-	).Scan(&user.ID, &user.Username, &user.PasswordHash, &user.Role, &user.CreatedAt)
+	).Scan(&user.ID, &user.Username, &user.PasswordHash, &user.Role, &user.Approved, &user.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -236,15 +285,24 @@ func (d *DB) GetUserByUsername(username string) (*models.User, error) {
 }
 
 func (d *DB) CreateUser(username, password, role string) (*models.User, error) {
+	return d.createUser(username, password, role, true)
+}
+
+func (d *DB) RegisterUser(username, password string) (*models.User, error) {
+	return d.createUser(username, password, "user", false)
+}
+
+func (d *DB) createUser(username, password, role string, approved bool) (*models.User, error) {
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
 		return nil, err
 	}
 	res, err := d.Exec(
-		"INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)",
+		"INSERT INTO users (username, password_hash, role, approved) VALUES (?, ?, ?, ?)",
 		username,
 		string(hash),
 		role,
+		approved,
 	)
 	if err != nil {
 		return nil, err
@@ -253,11 +311,11 @@ func (d *DB) CreateUser(username, password, role string) (*models.User, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &models.User{ID: id, Username: username, Role: role, PasswordHash: string(hash)}, nil
+	return &models.User{ID: id, Username: username, Role: role, Approved: approved, PasswordHash: string(hash)}, nil
 }
 
 func (d *DB) ListUsers() ([]models.User, error) {
-	rows, err := d.Query("SELECT id, username, role, created_at FROM users ORDER BY created_at, id")
+	rows, err := d.Query("SELECT id, username, role, approved, created_at FROM users ORDER BY created_at, id")
 	if err != nil {
 		return nil, err
 	}
@@ -265,12 +323,21 @@ func (d *DB) ListUsers() ([]models.User, error) {
 	users := make([]models.User, 0)
 	for rows.Next() {
 		var user models.User
-		if err := rows.Scan(&user.ID, &user.Username, &user.Role, &user.CreatedAt); err != nil {
+		if err := rows.Scan(&user.ID, &user.Username, &user.Role, &user.Approved, &user.CreatedAt); err != nil {
 			return nil, err
 		}
 		users = append(users, user)
 	}
 	return users, rows.Err()
+}
+
+func (d *DB) ApproveUser(id int64) (bool, error) {
+	result, err := d.Exec("UPDATE users SET approved = ? WHERE id = ? AND role IN ('user', 'member') AND approved = ?", true, id, false)
+	if err != nil {
+		return false, err
+	}
+	affected, err := result.RowsAffected()
+	return affected > 0, err
 }
 
 func (d *DB) DeleteMember(id int64) (bool, error) {

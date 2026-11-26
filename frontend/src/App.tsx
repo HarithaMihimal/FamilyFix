@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Film, Search, Shield, Tv, FolderOpen, Download, Clock3, Play, User, Server, QrCode, UserPlus, Trash2 } from 'lucide-react';
+import { Film, Search, Shield, Tv, FolderOpen, Download, Clock3, Play, User, Server, QrCode, UserPlus, Trash2, Check } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 
 interface Movie {
@@ -30,6 +30,7 @@ interface Account {
   id: number;
   username: string;
   role: string;
+  approved: boolean;
   created_at: string;
 }
 
@@ -54,6 +55,7 @@ function App() {
   const [accountError, setAccountError] = useState<string | null>(null);
   const [accountNotice, setAccountNotice] = useState<string | null>(null);
   const [accountBusy, setAccountBusy] = useState(false);
+  const [signupMessage, setSignupMessage] = useState<string | null>(null);
   const [network, setNetwork] = useState<{ local_server?: string; urls?: string[]; active_devices?: number } | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -185,11 +187,38 @@ function App() {
         }),
       });
       if (!response.ok) {
-        throw new Error('Invalid username or password');
+        const detail = await response.text();
+        throw new Error(detail.trim() || 'Invalid username or password');
       }
       await fetchSession();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to sign in');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSignup = async (formData: FormData) => {
+    setLoading(true);
+    setError(null);
+    setSignupMessage(null);
+    try {
+      const response = await fetch('/api/signup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          username: formData.get('username'),
+          password: formData.get('password'),
+        }),
+      });
+      if (!response.ok) {
+        const detail = await response.text();
+        throw new Error(detail.trim() || `Could not create account (server returned ${response.status})`);
+      }
+      setSignupMessage('Your account request was submitted. An admin must approve it before you can sign in.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to create account');
     } finally {
       setLoading(false);
     }
@@ -251,6 +280,27 @@ function App() {
       setAccountNotice(`Account "${account.username}" deleted.`);
     } catch (err) {
       setAccountError(err instanceof Error ? err.message : 'Could not delete account');
+    } finally {
+      setAccountBusy(false);
+    }
+  };
+
+  const approveAccount = async (account: Account) => {
+    setAccountBusy(true);
+    setAccountError(null);
+    setAccountNotice(null);
+    try {
+      const response = await fetch(`/api/admin/users/${account.id}/approve`, {
+        method: 'POST',
+        credentials: 'include',
+      });
+      if (!response.ok) {
+        throw new Error(`Could not approve account (server returned ${response.status})`);
+      }
+      await fetchAccounts();
+      setAccountNotice(`Account "${account.username}" approved.`);
+    } catch (err) {
+      setAccountError(err instanceof Error ? err.message : 'Could not approve account');
     } finally {
       setAccountBusy(false);
     }
@@ -367,12 +417,14 @@ function App() {
 
   if (!session.authenticated) {
     return (
-      <LoginScreen onSubmit={handleLogin} loading={loading} error={error} accessURL={accessURL} accessAddress={accessAddress} />
+      <LoginScreen onSubmit={handleLogin} onSignup={handleSignup} loading={loading} error={error} signupMessage={signupMessage} accessURL={accessURL} accessAddress={accessAddress} />
     );
   }
 
+  const isAdmin = session.user?.role === 'admin';
+
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100">
+    <div className={`min-h-screen bg-slate-950 text-slate-100 ${isAdmin ? '' : 'user-theme'}`}>
       <header className="sticky top-0 z-40 border-b border-slate-800 bg-slate-950/80 backdrop-blur">
         <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
           <div className="flex items-center gap-3">
@@ -523,18 +575,31 @@ function App() {
                 <div key={account.id} className="flex items-center justify-between gap-4 px-4 py-3">
                   <div>
                     <p className="font-medium text-white">{account.username}</p>
-                    <p className="text-xs capitalize text-slate-400">{account.role}</p>
+                    <p className="text-xs capitalize text-slate-400">{account.approved ? account.role : 'Pending approval'}</p>
                   </div>
                   {account.role !== 'admin' && (
-                    <button
-                      type="button"
-                      disabled={accountBusy}
-                      onClick={() => void deleteAccount(account)}
-                      className="inline-flex items-center gap-2 rounded-lg border border-red-500/30 px-3 py-2 text-sm text-red-300 hover:bg-red-500/10 disabled:opacity-60"
-                      aria-label={`Delete ${account.username}`}
-                    >
-                      <Trash2 size={15} /> Delete
-                    </button>
+                    <div className="flex items-center gap-2">
+                      {!account.approved && (
+                        <button
+                          type="button"
+                          disabled={accountBusy}
+                          onClick={() => void approveAccount(account)}
+                          className="inline-flex items-center gap-2 rounded-lg border border-emerald-500/30 px-3 py-2 text-sm text-emerald-300 hover:bg-emerald-500/10 disabled:opacity-60"
+                          aria-label={`Approve ${account.username}`}
+                        >
+                          <Check size={15} /> Approve
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        disabled={accountBusy}
+                        onClick={() => void deleteAccount(account)}
+                        className="inline-flex items-center gap-2 rounded-lg border border-red-500/30 px-3 py-2 text-sm text-red-300 hover:bg-red-500/10 disabled:opacity-60"
+                        aria-label={`Delete ${account.username}`}
+                      >
+                        <Trash2 size={15} /> Delete
+                      </button>
+                    </div>
                   )}
                 </div>
               ))}
@@ -797,7 +862,17 @@ function App() {
   );
 }
 
-function LoginScreen({ onSubmit, loading, error, accessURL, accessAddress }: { onSubmit: (formData: FormData) => void; loading: boolean; error: string | null; accessURL: string; accessAddress: string;}) {
+function LoginScreen({ onSubmit, onSignup, loading, error, signupMessage, accessURL, accessAddress }: {
+  onSubmit: (formData: FormData) => void;
+  onSignup: (formData: FormData) => void;
+  loading: boolean;
+  error: string | null;
+  signupMessage: string | null;
+  accessURL: string;
+  accessAddress: string;
+}) {
+  const [signingUp, setSigningUp] = useState(false);
+
   return (
     <div className="flex min-h-screen items-center justify-center bg-slate-950 px-4 text-slate-100">
       <div className="grid w-full max-w-6xl gap-6 overflow-hidden rounded-3xl border border-slate-800 bg-slate-900/80 shadow-2xl shadow-cyan-950/30 lg:grid-cols-[1.1fr_0.9fr]">
@@ -832,31 +907,45 @@ function LoginScreen({ onSubmit, loading, error, accessURL, accessAddress }: { o
             onSubmit={(e) => {
               e.preventDefault();
               const formData = new FormData(e.currentTarget);
-              onSubmit(formData);
+              if (signingUp) {
+                onSignup(formData);
+              } else {
+                onSubmit(formData);
+              }
             }}
           >
             <div>
-              <p className="text-xs uppercase tracking-[0.2em] text-cyan-300">Welcome back</p>
-              <h2 className="mt-2 text-3xl font-bold text-white">Sign in to FamilyFlix</h2>
+              <p className="text-xs uppercase tracking-[0.2em] text-cyan-300">{signingUp ? 'Join your family library' : 'Welcome back'}</p>
+              <h2 className="mt-2 text-3xl font-bold text-white">{signingUp ? 'Create your account' : 'Sign in to FamilyFlix'}</h2>
             </div>
 
             <label className="block">
               <span className="mb-2 block text-sm text-slate-300">Username</span>
-              <input name="username" autoComplete="username" className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-3 text-white outline-none ring-0 placeholder:text-slate-500 focus:border-cyan-500" placeholder="Username" />
+              <input name="username" required minLength={3} maxLength={32} pattern="[A-Za-z0-9._-]+" autoComplete="username" className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-3 text-white outline-none ring-0 placeholder:text-slate-500 focus:border-cyan-500" placeholder="Username" />
             </label>
 
             <label className="block">
               <span className="mb-2 block text-sm text-slate-300">Password</span>
-              <input type="password" name="password" autoComplete="current-password" className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-3 text-white placeholder:text-slate-500 focus:border-cyan-500" placeholder="Password" />
+              <input type="password" name="password" required minLength={8} maxLength={72} autoComplete={signingUp ? 'new-password' : 'current-password'} className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-3 text-white placeholder:text-slate-500 focus:border-cyan-500" placeholder="Password" />
             </label>
 
             {error && <p className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-200">{error}</p>}
+            {signupMessage && <p role="status" className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-200">{signupMessage}</p>}
 
             <button type="submit" disabled={loading} className="w-full rounded-xl bg-cyan-500 px-4 py-3 font-semibold text-slate-950 transition hover:bg-cyan-400 disabled:cursor-not-allowed disabled:opacity-70">
-              {loading ? 'Signing in...' : 'Sign in'}
+              {loading ? (signingUp ? 'Submitting...' : 'Signing in...') : (signingUp ? 'Request account' : 'Sign in')}
             </button>
 
-            <p className="border-t border-slate-800 pt-4 text-xs text-slate-400">Sign in with the account provided by your FamilyFix administrator.</p>
+            <p className="border-t border-slate-800 pt-4 text-xs text-slate-400">
+              {signingUp ? 'New accounts require admin approval before sign-in.' : 'Sign in with an approved FamilyFix account.'}
+            </p>
+            <button
+              type="button"
+              onClick={() => setSigningUp((current) => !current)}
+              className="w-full text-sm font-medium text-cyan-300 hover:text-cyan-200"
+            >
+              {signingUp ? 'Already have an account? Sign in' : 'New here? Sign up'}
+            </button>
           </form>
         </div>
       </div>

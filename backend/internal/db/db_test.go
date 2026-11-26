@@ -1,6 +1,7 @@
 package db
 
 import (
+	"database/sql"
 	"os"
 	"path/filepath"
 	"testing"
@@ -94,6 +95,77 @@ func TestUserManagementKeepsAdminsAndHidesPasswordHashes(t *testing.T) {
 	store, err := New(filepath.Join(t.TempDir(), "data"))
 	if err != nil {
 		t.Fatal(err)
+	}
+
+	func TestSignupUsersRemainPendingUntilApproved(t *testing.T) {
+		store, err := New(filepath.Join(t.TempDir(), "data"))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		func TestExistingUsersAreApprovedDuringSchemaMigration(t *testing.T) {
+			dataDir := filepath.Join(t.TempDir(), "data")
+			if err := os.MkdirAll(dataDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			sqlDB, err := sql.Open("sqlite", filepath.Join(dataDir, "familyflix.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = sqlDB.Exec(`CREATE TABLE users (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				username TEXT UNIQUE NOT NULL,
+				password_hash TEXT NOT NULL,
+				role TEXT NOT NULL DEFAULT 'member',
+				created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+			)`)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := sqlDB.Exec("INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)", "existing-user", "hash", "user"); err != nil {
+				t.Fatal(err)
+			}
+			if err := sqlDB.Close(); err != nil {
+				t.Fatal(err)
+			}
+
+			store, err := New(dataDir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer store.Close()
+			user, err := store.GetUserByUsername("existing-user")
+			if err != nil {
+				t.Fatalf("get migrated user: %v", err)
+			}
+			if !user.Approved {
+				t.Fatal("existing users must remain approved after migration")
+			}
+		}
+		defer store.Close()
+
+		user, err := store.RegisterUser("pending-user", "pending-pass-123")
+		if err != nil {
+			t.Fatalf("register user: %v", err)
+		}
+		if user.Role != "user" || user.Approved {
+			t.Fatalf("registered user = %#v, want pending normal user", user)
+		}
+
+		approved, err := store.ApproveUser(user.ID)
+		if err != nil || !approved {
+			t.Fatalf("ApproveUser() = (%v, %v), want (true, nil)", approved, err)
+		}
+		storedUser, err := store.GetUserByUsername(user.Username)
+		if err != nil {
+			t.Fatalf("get approved user: %v", err)
+		}
+		if !storedUser.Approved {
+			t.Fatal("expected user to be approved")
+		}
+		if approved, err := store.ApproveUser(user.ID); err != nil || approved {
+			t.Fatalf("approving an already approved user = (%v, %v), want (false, nil)", approved, err)
+		}
 	}
 	defer store.Close()
 
