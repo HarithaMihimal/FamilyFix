@@ -59,13 +59,34 @@ input {
   background-color: rgb(249 115 22 / 0.1) !important;
 }
 
-.user-theme [class~="border-cyan-500/40"],
-.user-theme [class~="border-cyan-500/30"] {
+.user-theme [class~="from-cyan-950/60"] {
+  background-image: linear-gradient(to right, rgb(67 20 7 / 0.6), #0f172a, #020617) !important;
+}
+
+.user-theme [class*="rgba(34,211,238,0.24)"] {
+  background-image: radial-gradient(circle at top right, rgb(249 115 22 / 0.24), transparent 35%) !important;
+}
+
+.user-theme [class*="rgba(34,211,238,0.22)"] {
+  background-image:
+    radial-gradient(circle at top, rgb(249 115 22 / 0.22), transparent 35%),
+    linear-gradient(135deg, #0f172a, #111827) !important;
+}
+
+.user-theme [class~="border-cyan-500/40"] {
   border-color: rgb(249 115 22 / 0.4) !important;
+}
+
+.user-theme [class~="border-cyan-500/30"] {
+  border-color: rgb(249 115 22 / 0.3) !important;
 }
 
 .user-theme [class~="border-cyan-500/50"] {
   border-color: rgb(249 115 22 / 0.5) !important;
+}
+
+.user-theme [class~="shadow-glow"] {
+  --tw-shadow: 0 0 25px rgb(249 115 22 / 0.35) !important;
 }
 
 .user-theme [class~="hover:bg-cyan-400"]:hover {
@@ -85,7 +106,28 @@ input {
 }
 
 .user-theme [class~="hover:shadow-cyan-500/10"]:hover {
-  --tw-shadow-color: rgb(249 115 22 / 0.1);
+  --tw-shadow: 0 10px 15px -3px rgb(249 115 22 / 0.1), 0 4px 6px -4px rgb(249 115 22 / 0.1) !important;
+}
+
+.user-theme [class~="text-emerald-300"] {
+  color: #fdba74 !important;
+}
+
+.user-theme [class~="bg-emerald-500/10"] {
+  background-color: rgb(249 115 22 / 0.1) !important;
+}
+
+.user-theme [class~="bg-emerald-400"] {
+  background-color: #fb923c !important;
+}
+
+.user-theme [class~="border-emerald-500/40"],
+.user-theme [class~="border-emerald-500/30"] {
+  border-color: rgb(249 115 22 / 0.4) !important;
+}
+
+.user-theme [class~="hover:bg-emerald-500/10"]:hover {
+  background-color: rgb(249 115 22 / 0.1) !important;
 }
 
 .user-theme ::selection {
