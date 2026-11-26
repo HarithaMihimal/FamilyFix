@@ -55,29 +55,6 @@ func TestRequireAdminRejectsNormalUsersAndForgedCookies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	func TestPendingSignupCannotLogInUntilApproved(t *testing.T) {
-		store, err := db.New(filepath.Join(t.TempDir(), "data"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer store.Close()
-		user, err := store.RegisterUser("pending-user", "pending-pass-123")
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		key := []byte("test-session-signing-key-that-is-long-enough")
-		if err := Login(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/api/login", nil), store, key, user.Username, "pending-pass-123"); err != ErrPendingApproval {
-			t.Fatalf("pending Login() error = %v, want ErrPendingApproval", err)
-		}
-		if approved, err := store.ApproveUser(user.ID); err != nil || !approved {
-			t.Fatalf("approve user = (%v, %v), want (true, nil)", approved, err)
-		}
-		if err := Login(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/api/login", nil), store, key, user.Username, "pending-pass-123"); err != nil {
-			t.Fatalf("login after approval: %v", err)
-		}
-	}
 	defer store.Close()
 	if _, err := store.CreateUser("family-member", "member-pass-123", "user"); err != nil {
 		t.Fatal(err)
@@ -107,5 +84,36 @@ func TestRequireAdminRejectsNormalUsersAndForgedCookies(t *testing.T) {
 	handler.ServeHTTP(response, request)
 	if response.Code != http.StatusUnauthorized {
 		t.Fatalf("forged-cookie admin response = %d, want %d", response.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestPendingSignupCannotLogInUntilApproved(t *testing.T) {
+	store, err := db.New(filepath.Join(t.TempDir(), "data"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	user, err := store.RegisterUser("pending-user", "pending-pass-123")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	key := []byte("test-session-signing-key-that-is-long-enough")
+	if err := Login(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/api/login", nil), store, key, user.Username, "pending-pass-123"); err != ErrPendingApproval {
+		t.Fatalf("pending Login() error = %v, want ErrPendingApproval", err)
+	}
+	request := httptest.NewRequest(http.MethodGet, "/api/session", nil)
+	request.AddCookie(&http.Cookie{
+		Name:  sessionCookieName,
+		Value: signSession(key, user.Username, time.Now().Add(sessionDuration)),
+	})
+	if _, err := CurrentUser(request, store, key); err != ErrPendingApproval {
+		t.Fatalf("pending CurrentUser() error = %v, want ErrPendingApproval", err)
+	}
+	if approved, err := store.ApproveUser(user.ID); err != nil || !approved {
+		t.Fatalf("approve user = (%v, %v), want (true, nil)", approved, err)
+	}
+	if err := Login(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/api/login", nil), store, key, user.Username, "pending-pass-123"); err != nil {
+		t.Fatalf("login after approval: %v", err)
 	}
 }
