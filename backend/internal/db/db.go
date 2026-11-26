@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"familyflix/internal/models"
+	"github.com/go-sql-driver/mysql"
 	"golang.org/x/crypto/bcrypt"
 	_ "modernc.org/sqlite"
 )
@@ -17,14 +18,72 @@ import (
 type DB struct {
 	*sql.DB
 	scanMu sync.Mutex
+	driver string
 }
 
 func New(dataDir string) (*DB, error) {
+	store, err := open(dataDir, "sqlite", filepath.Join(dataDir, "familyflix.db"))
+	if err != nil {
+		return nil, err
+	}
+	if err := store.SeedAdmin(); err != nil {
+		_ = store.Close()
+		return nil, err
+	}
+	return store, nil
+}
+
+type MySQLConfig struct {
+	Host          string
+	Port          int
+	User          string
+	Password      string
+	Name          string
+	AdminUsername string
+	AdminPassword string
+}
+
+func NewWithMySQL(dataDir string, cfg MySQLConfig) (*DB, error) {
+	if cfg.Host == "" || cfg.User == "" || cfg.Name == "" {
+		return nil, fmt.Errorf("DB_HOST, DB_USER, and DB_NAME are required when using MySQL")
+	}
+	if cfg.Port == 0 {
+		cfg.Port = 3306
+	}
+	mysqlConfig := mysql.Config{
+		User:      cfg.User,
+		Passwd:    cfg.Password,
+		Net:       "tcp",
+		Addr:      fmt.Sprintf("%s:%d", cfg.Host, cfg.Port),
+		DBName:    cfg.Name,
+		ParseTime: true,
+		Loc:       time.UTC,
+	}
+	dsn := mysqlConfig.FormatDSN()
+	store, err := open(dataDir, "mysql", dsn)
+	if err != nil {
+		return nil, err
+	}
+	adminUsername := cfg.AdminUsername
+	if adminUsername == "" {
+		adminUsername = "admin"
+	}
+	adminPassword := cfg.AdminPassword
+	if adminPassword == "" {
+		adminPassword = "admin123"
+	}
+	if err := store.SeedAdminWithCredentials(adminUsername, adminPassword); err != nil {
+		_ = store.Close()
+		return nil, err
+	}
+	return store, nil
+}
+
+func open(dataDir, driver, source string) (*DB, error) {
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		return nil, err
 	}
-	dbPath := filepath.Join(dataDir, "familyflix.db")
-	sqlDB, err := sql.Open("sqlite", dbPath)
+	sqlDB, err := sql.Open(driver, source)
 	if err != nil {
 		return nil, err
 	}
@@ -32,11 +91,9 @@ func New(dataDir string) (*DB, error) {
 		_ = sqlDB.Close()
 		return nil, err
 	}
-	store := &DB{DB: sqlDB}
+	store := &DB{DB: sqlDB, driver: driver}
 	if err := store.InitSchema(); err != nil {
-		return nil, err
-	}
-	if err := store.SeedAdmin(); err != nil {
+		_ = sqlDB.Close()
 		return nil, err
 	}
 	return store, nil
@@ -48,7 +105,7 @@ func (d *DB) InitSchema() error {
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			username TEXT UNIQUE NOT NULL,
 			password_hash TEXT NOT NULL,
-			role TEXT NOT NULL DEFAULT 'member',
+			role TEXT NOT NULL DEFAULT 'user',
 			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 		);`,
 		`CREATE TABLE IF NOT EXISTS movies (
@@ -85,6 +142,51 @@ func (d *DB) InitSchema() error {
 			PRIMARY KEY (user_id, movie_id)
 		);`,
 	}
+	if d.driver == "mysql" {
+		queries = []string{
+			`CREATE TABLE IF NOT EXISTS users (
+				id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+				username VARCHAR(191) NOT NULL UNIQUE,
+				password_hash VARCHAR(255) NOT NULL,
+				role VARCHAR(32) NOT NULL DEFAULT 'user',
+				created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+			)`,
+			`CREATE TABLE IF NOT EXISTS movies (
+				id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+				title TEXT NOT NULL,
+				file_name TEXT NOT NULL,
+				file_path TEXT NOT NULL,
+				poster_url TEXT,
+				description TEXT,
+				genre TEXT,
+				duration TEXT,
+				resolution TEXT,
+				format TEXT,
+				file_size BIGINT DEFAULT 0,
+				created_at VARCHAR(40) NOT NULL,
+				updated_at VARCHAR(40) NOT NULL
+			)`,
+			`CREATE TABLE IF NOT EXISTS folders (
+				id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+				path TEXT NOT NULL,
+				created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				UNIQUE KEY folders_path_unique (path(191))
+			)`,
+			`CREATE TABLE IF NOT EXISTS watch_progress (
+				movie_id BIGINT NOT NULL,
+				user_id BIGINT NOT NULL,
+				position DOUBLE NOT NULL DEFAULT 0,
+				updated_at VARCHAR(40) NOT NULL,
+				PRIMARY KEY (movie_id, user_id)
+			)`,
+			`CREATE TABLE IF NOT EXISTS my_list (
+				user_id BIGINT NOT NULL,
+				movie_id BIGINT NOT NULL,
+				added_at VARCHAR(40) NOT NULL,
+				PRIMARY KEY (user_id, movie_id)
+			)`,
+		}
+	}
 	for _, q := range queries {
 		if _, err := d.Exec(q); err != nil {
 			return err
@@ -94,6 +196,10 @@ func (d *DB) InitSchema() error {
 }
 
 func (d *DB) SeedAdmin() error {
+	return d.SeedAdminWithCredentials("admin", "admin123")
+}
+
+func (d *DB) SeedAdminWithCredentials(username, password string) error {
 	var count int
 	if err := d.QueryRow("SELECT COUNT(*) FROM users").Scan(&count); err != nil {
 		return err
@@ -101,13 +207,16 @@ func (d *DB) SeedAdmin() error {
 	if count > 0 {
 		return nil
 	}
-	passwordHash, err := bcrypt.GenerateFromPassword([]byte("admin123"), bcrypt.DefaultCost)
+	if username == "" || len(password) < 8 || len(password) > 72 {
+		return fmt.Errorf("admin username is required and admin password must be between 8 and 72 bytes")
+	}
+	passwordHash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
 		return err
 	}
 	_, err = d.Exec(
 		"INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)",
-		"admin",
+		username,
 		string(passwordHash),
 		"admin",
 	)
@@ -147,8 +256,64 @@ func (d *DB) CreateUser(username, password, role string) (*models.User, error) {
 	return &models.User{ID: id, Username: username, Role: role, PasswordHash: string(hash)}, nil
 }
 
+func (d *DB) ListUsers() ([]models.User, error) {
+	rows, err := d.Query("SELECT id, username, role, created_at FROM users ORDER BY created_at, id")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	users := make([]models.User, 0)
+	for rows.Next() {
+		var user models.User
+		if err := rows.Scan(&user.ID, &user.Username, &user.Role, &user.CreatedAt); err != nil {
+			return nil, err
+		}
+		users = append(users, user)
+	}
+	return users, rows.Err()
+}
+
+func (d *DB) DeleteMember(id int64) (bool, error) {
+	tx, err := d.Begin()
+	if err != nil {
+		return false, err
+	}
+	result, err := tx.Exec("DELETE FROM users WHERE id = ? AND role IN ('user', 'member')", id)
+	if err != nil {
+		_ = tx.Rollback()
+		return false, err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		_ = tx.Rollback()
+		return false, err
+	}
+	if affected == 0 {
+		if err := tx.Rollback(); err != nil {
+			return false, err
+		}
+		return false, nil
+	}
+	if _, err := tx.Exec("DELETE FROM watch_progress WHERE user_id = ?", id); err != nil {
+		_ = tx.Rollback()
+		return false, err
+	}
+	if _, err := tx.Exec("DELETE FROM my_list WHERE user_id = ?", id); err != nil {
+		_ = tx.Rollback()
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 func (d *DB) AddFolder(path string) error {
-	_, err := d.Exec("INSERT OR IGNORE INTO folders (path) VALUES (?)", path)
+	query := "INSERT OR IGNORE INTO folders (path) VALUES (?)"
+	if d.driver == "mysql" {
+		query = "INSERT IGNORE INTO folders (path) VALUES (?)"
+	}
+	_, err := d.Exec(query, path)
 	return err
 }
 
@@ -254,10 +419,16 @@ func (d *DB) DeleteMovie(id int64) error {
 }
 
 func (d *DB) SaveWatchProgress(userID int64, movieID int64, position float64) error {
+	query := `INSERT INTO watch_progress (movie_id, user_id, position, updated_at)
+		VALUES (?, ?, ?, ?)
+		ON CONFLICT(movie_id, user_id) DO UPDATE SET position = excluded.position, updated_at = excluded.updated_at`
+	if d.driver == "mysql" {
+		query = `INSERT INTO watch_progress (movie_id, user_id, position, updated_at)
+			VALUES (?, ?, ?, ?)
+			ON DUPLICATE KEY UPDATE position = VALUES(position), updated_at = VALUES(updated_at)`
+	}
 	_, err := d.Exec(
-		`INSERT INTO watch_progress (movie_id, user_id, position, updated_at)
-		 VALUES (?, ?, ?, ?)
-		 ON CONFLICT(movie_id, user_id) DO UPDATE SET position = excluded.position, updated_at = excluded.updated_at`,
+		query,
 		movieID,
 		userID,
 		position,
@@ -284,8 +455,12 @@ func (d *DB) GetWatchProgress(userID int64) ([]models.WatchProgress, error) {
 }
 
 func (d *DB) AddToMyList(userID, movieID int64) error {
+	query := "INSERT OR IGNORE INTO my_list (user_id, movie_id, added_at) VALUES (?, ?, ?)"
+	if d.driver == "mysql" {
+		query = "INSERT IGNORE INTO my_list (user_id, movie_id, added_at) VALUES (?, ?, ?)"
+	}
 	_, err := d.Exec(
-		"INSERT OR IGNORE INTO my_list (user_id, movie_id, added_at) VALUES (?, ?, ?)",
+		query,
 		userID,
 		movieID,
 		time.Now().UTC().Format(time.RFC3339),

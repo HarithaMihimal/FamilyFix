@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"familyflix/internal/models"
 )
 
 func TestScanFolderIndexesMoviesRecursivelyWithoutDuplicates(t *testing.T) {
@@ -12,6 +14,7 @@ func TestScanFolderIndexesMoviesRecursivelyWithoutDuplicates(t *testing.T) {
 	if err := os.MkdirAll(nested, 0o755); err != nil {
 		t.Fatal(err)
 	}
+
 	moviePath := filepath.Join(nested, "Family Movie.MKV")
 	if err := os.WriteFile(moviePath, []byte("video"), 0o600); err != nil {
 		t.Fatal(err)
@@ -84,5 +87,54 @@ func TestScanFolderIndexesMoviesRecursivelyWithoutDuplicates(t *testing.T) {
 	}
 	if len(movies) != 1 || movies[0].FilePath != newMoviePath {
 		t.Fatalf("failed scan changed movie list: %#v", movies)
+	}
+}
+
+func TestUserManagementKeepsAdminsAndHidesPasswordHashes(t *testing.T) {
+	store, err := New(filepath.Join(t.TempDir(), "data"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	member, err := store.CreateUser("family-member", "member-pass-123", "user")
+	if err != nil {
+		t.Fatalf("create member: %v", err)
+	}
+	storedMember, err := store.GetUserByUsername(member.Username)
+	if err != nil {
+		t.Fatalf("get member: %v", err)
+	}
+	if storedMember.PasswordHash == "" || storedMember.PasswordHash == "member-pass-123" {
+		t.Fatal("expected a stored password hash")
+	}
+
+	users, err := store.ListUsers()
+	if err != nil {
+		t.Fatalf("list users: %v", err)
+	}
+	var listedMember *models.User
+	for i := range users {
+		if users[i].ID == member.ID {
+			listedMember = &users[i]
+			break
+		}
+	}
+	if listedMember == nil || listedMember.PasswordHash != "" {
+		t.Fatal("listed users must not include password hashes")
+	}
+
+	admin, err := store.GetUserByUsername("admin")
+	if err != nil {
+		t.Fatalf("get seeded admin: %v", err)
+	}
+	if deleted, err := store.DeleteMember(admin.ID); err != nil || deleted {
+		t.Fatalf("DeleteMember(admin) = (%v, %v), want (false, nil)", deleted, err)
+	}
+	if deleted, err := store.DeleteMember(member.ID); err != nil || !deleted {
+		t.Fatalf("DeleteMember(member) = (%v, %v), want (true, nil)", deleted, err)
+	}
+	if _, err := store.GetUserByUsername(member.Username); err == nil {
+		t.Fatal("expected deleted member to be unavailable")
 	}
 }

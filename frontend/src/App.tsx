@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Film, LogIn, Search, Shield, Tv, FolderOpen, Download, Clock3, Play, User, Server, QrCode } from 'lucide-react';
+import { Film, Search, Shield, Tv, FolderOpen, Download, Clock3, Play, User, Server, QrCode, UserPlus, Trash2 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 
 interface Movie {
@@ -26,6 +26,13 @@ interface Answer {
   status?: string;
 }
 
+interface Account {
+  id: number;
+  username: string;
+  role: string;
+  created_at: string;
+}
+
 const formatBytes = (bytes: number) => {
   if (bytes === 0) return '0 B';
   const units = ['B', 'KB', 'MB', 'GB', 'TB'];
@@ -43,6 +50,10 @@ function App() {
   const [movies, setMovies] = useState<Movie[]>([]);
   const [myList, setMyList] = useState<Movie[]>([]);
   const [watchProgress, setWatchProgress] = useState<WatchProgress[]>([]);
+  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [accountError, setAccountError] = useState<string | null>(null);
+  const [accountNotice, setAccountNotice] = useState<string | null>(null);
+  const [accountBusy, setAccountBusy] = useState(false);
   const [network, setNetwork] = useState<{ local_server?: string; urls?: string[]; active_devices?: number } | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -88,6 +99,15 @@ function App() {
     }
   };
 
+  const fetchAccounts = async () => {
+    const response = await fetch('/api/admin/users', { credentials: 'include' });
+    if (!response.ok) {
+      throw new Error(`Could not load user accounts (server returned ${response.status})`);
+    }
+    const data = await response.json();
+    setAccounts(Array.isArray(data) ? data : []);
+  };
+
   const fetchSession = async () => {
     const response = await fetch('/api/session', { credentials: 'include' });
     if (response.status === 401) {
@@ -103,7 +123,13 @@ function App() {
     setSession(data);
     setSessionError(null);
     if (data.authenticated) {
-      await Promise.all([fetchMovies(), fetchMyList(), fetchWatchProgress()]);
+      const tasks = [fetchMovies(), fetchMyList(), fetchWatchProgress()];
+      if (data.user?.role === 'admin') {
+        tasks.push(fetchAccounts());
+      } else {
+        setAccounts([]);
+      }
+      await Promise.all(tasks);
     }
   };
 
@@ -175,7 +201,59 @@ function App() {
     setMovies([]);
     setMyList([]);
     setWatchProgress([]);
+    setAccounts([]);
     lastProgressSaveRef.current = {};
+  };
+
+  const createAccount = async (formData: FormData) => {
+    setAccountBusy(true);
+    setAccountError(null);
+    setAccountNotice(null);
+    try {
+      const response = await fetch('/api/admin/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          username: formData.get('username'),
+          password: formData.get('password'),
+        }),
+      });
+      if (!response.ok) {
+        const detail = await response.text();
+        throw new Error(detail.trim() || `Could not create account (server returned ${response.status})`);
+      }
+      await fetchAccounts();
+      setAccountNotice('Normal user account created.');
+      return true;
+    } catch (err) {
+      setAccountError(err instanceof Error ? err.message : 'Could not create account');
+      return false;
+    } finally {
+      setAccountBusy(false);
+    }
+  };
+
+  const deleteAccount = async (account: Account) => {
+    if (!window.confirm(`Delete the normal user account "${account.username}"?`)) return;
+    setAccountBusy(true);
+    setAccountError(null);
+    setAccountNotice(null);
+    try {
+      const response = await fetch(`/api/admin/users/${account.id}`, {
+        method: 'DELETE',
+        credentials: 'include',
+      });
+      if (!response.ok) {
+        throw new Error(`Could not delete account (server returned ${response.status})`);
+      }
+      await fetchAccounts();
+      setAccountNotice(`Account "${account.username}" deleted.`);
+    } catch (err) {
+      setAccountError(err instanceof Error ? err.message : 'Could not delete account');
+    } finally {
+      setAccountBusy(false);
+    }
   };
 
   const refreshLibrary = async () => {
@@ -409,6 +487,61 @@ function App() {
           <StatCard icon={<User size={18} />} title="Account" value={session.user?.username ?? 'Admin'} subtitle={session.user?.role ?? 'admin'} />
           <StatCard icon={<Download size={18} />} title="Network" value={network?.active_devices == null ? '—' : String(network.active_devices)} subtitle="Devices active in the last 2 minutes" />
         </section>
+
+        {session.user?.role === 'admin' && (
+          <section className="mt-10 rounded-2xl border border-slate-800 bg-slate-900/80 p-5" aria-labelledby="accounts-heading">
+            <div className="mb-5">
+              <p className="flex items-center gap-2 text-xs uppercase tracking-[0.2em] text-cyan-300"><Shield size={14} /> Admin only</p>
+              <h2 id="accounts-heading" className="mt-2 text-2xl font-bold text-white">User accounts</h2>
+              <p className="mt-1 text-sm text-slate-400">Create and remove normal user accounts. Only admins can manage accounts.</p>
+            </div>
+            <form
+              className="grid gap-3 md:grid-cols-[1fr_1fr_auto] md:items-end"
+              onSubmit={async (event) => {
+                event.preventDefault();
+                const form = event.currentTarget;
+                const created = await createAccount(new FormData(form));
+                if (created) form.reset();
+              }}
+            >
+              <label className="block">
+                <span className="mb-2 block text-sm text-slate-300">Username</span>
+                <input name="username" required minLength={3} maxLength={32} pattern="[A-Za-z0-9._-]+" autoComplete="off" className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2.5 text-white focus:border-cyan-500" />
+              </label>
+              <label className="block">
+                <span className="mb-2 block text-sm text-slate-300">Temporary password</span>
+                <input name="password" type="password" required minLength={8} maxLength={72} autoComplete="new-password" className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2.5 text-white focus:border-cyan-500" />
+              </label>
+              <button type="submit" disabled={accountBusy} className="inline-flex items-center justify-center gap-2 rounded-xl bg-cyan-500 px-4 py-2.5 font-semibold text-slate-950 hover:bg-cyan-400 disabled:opacity-60">
+                <UserPlus size={16} /> Create normal user
+              </button>
+            </form>
+            {accountError && <p role="alert" className="mt-3 text-sm text-red-300">{accountError}</p>}
+            {accountNotice && <p role="status" className="mt-3 text-sm text-emerald-300">{accountNotice}</p>}
+            <div className="mt-5 divide-y divide-slate-800 rounded-xl border border-slate-800">
+              {accounts.map((account) => (
+                <div key={account.id} className="flex items-center justify-between gap-4 px-4 py-3">
+                  <div>
+                    <p className="font-medium text-white">{account.username}</p>
+                    <p className="text-xs capitalize text-slate-400">{account.role}</p>
+                  </div>
+                  {account.role !== 'admin' && (
+                    <button
+                      type="button"
+                      disabled={accountBusy}
+                      onClick={() => void deleteAccount(account)}
+                      className="inline-flex items-center gap-2 rounded-lg border border-red-500/30 px-3 py-2 text-sm text-red-300 hover:bg-red-500/10 disabled:opacity-60"
+                      aria-label={`Delete ${account.username}`}
+                    >
+                      <Trash2 size={15} /> Delete
+                    </button>
+                  )}
+                </div>
+              ))}
+              {accounts.length === 0 && <p className="px-4 py-3 text-sm text-slate-400">No accounts found.</p>}
+            </div>
+          </section>
+        )}
 
         <section className="mt-10 rounded-2xl border border-slate-800 bg-slate-900/80 p-5">
           <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
@@ -709,12 +842,12 @@ function LoginScreen({ onSubmit, loading, error, accessURL, accessAddress }: { o
 
             <label className="block">
               <span className="mb-2 block text-sm text-slate-300">Username</span>
-              <input name="username" defaultValue="admin" className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-3 text-white outline-none ring-0 placeholder:text-slate-500 focus:border-cyan-500" placeholder="admin" />
+              <input name="username" autoComplete="username" className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-3 text-white outline-none ring-0 placeholder:text-slate-500 focus:border-cyan-500" placeholder="Username" />
             </label>
 
             <label className="block">
               <span className="mb-2 block text-sm text-slate-300">Password</span>
-              <input type="password" name="password" defaultValue="admin123" className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-3 text-white placeholder:text-slate-500 focus:border-cyan-500" placeholder="••••••••" />
+              <input type="password" name="password" autoComplete="current-password" className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-3 text-white placeholder:text-slate-500 focus:border-cyan-500" placeholder="Password" />
             </label>
 
             {error && <p className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-200">{error}</p>}
@@ -723,10 +856,7 @@ function LoginScreen({ onSubmit, loading, error, accessURL, accessAddress }: { o
               {loading ? 'Signing in...' : 'Sign in'}
             </button>
 
-            <div className="flex items-center justify-between border-t border-slate-800 pt-4 text-xs text-slate-400">
-              <span>Default admin</span>
-              <span>admin / admin123</span>
-            </div>
+            <p className="border-t border-slate-800 pt-4 text-xs text-slate-400">Sign in with the account provided by your FamilyFix administrator.</p>
           </form>
         </div>
       </div>

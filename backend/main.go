@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/rand"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -33,7 +36,21 @@ func main() {
 		log.Fatalf("could not create movies dir: %v", err)
 	}
 
-	database, err := db.New(cfg.DataDir)
+	sessionKey, err := loadSessionKey(cfg.DataDir, cfg.SessionKey)
+	if err != nil {
+		log.Fatalf("could not load session signing key: %v", err)
+	}
+
+	var database *db.DB
+	if cfg.DBHost != "" {
+		database, err = db.NewWithMySQL(cfg.DataDir, db.MySQLConfig{
+			Host: cfg.DBHost, Port: cfg.DBPort, User: cfg.DBUser,
+			Password: cfg.DBPassword, Name: cfg.DBName,
+			AdminUsername: cfg.AdminUsername, AdminPassword: cfg.AdminPassword,
+		})
+	} else {
+		database, err = db.New(cfg.DataDir)
+	}
 	if err != nil {
 		log.Fatalf("could not initialize database: %v", err)
 	}
@@ -80,7 +97,7 @@ func main() {
 			http.Error(w, "Username and password are required", http.StatusBadRequest)
 			return
 		}
-		if err := auth.Login(w, r, database, payload.Username, payload.Password); err != nil {
+		if err := auth.Login(w, r, database, sessionKey, payload.Username, payload.Password); err != nil {
 			http.Error(w, err.Error(), http.StatusUnauthorized)
 			return
 		}
@@ -94,7 +111,7 @@ func main() {
 	})
 
 	r.Get("/api/session", func(w http.ResponseWriter, r *http.Request) {
-		user, err := auth.CurrentUser(r, database)
+		user, err := auth.CurrentUser(r, database, sessionKey)
 		if err != nil {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)
@@ -106,7 +123,71 @@ func main() {
 	})
 
 	r.Route("/api", func(r chi.Router) {
-		r.With(auth.RequireAuth(database)).Get("/movies", func(w http.ResponseWriter, r *http.Request) {
+		r.With(auth.RequireAdmin(database, sessionKey)).Get("/admin/users", func(w http.ResponseWriter, r *http.Request) {
+			users, err := database.ListUsers()
+			if err != nil {
+				http.Error(w, "Could not load users", http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(users)
+		})
+
+		r.With(auth.RequireAdmin(database, sessionKey)).Post("/admin/users", func(w http.ResponseWriter, r *http.Request) {
+			var payload struct {
+				Username string `json:"username"`
+				Password string `json:"password"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				http.Error(w, "Invalid user payload", http.StatusBadRequest)
+				return
+			}
+			payload.Username = strings.TrimSpace(payload.Username)
+			if !validUsername(payload.Username) {
+				http.Error(w, "Username must be 3-32 characters and contain only letters, numbers, dots, underscores, or hyphens", http.StatusBadRequest)
+				return
+			}
+			if len(payload.Password) < 8 || len(payload.Password) > 72 {
+				http.Error(w, "Password must be between 8 and 72 bytes", http.StatusBadRequest)
+				return
+			}
+			if _, err := database.GetUserByUsername(payload.Username); err == nil {
+				http.Error(w, "Username is already taken", http.StatusConflict)
+				return
+			} else if !errors.Is(err, sql.ErrNoRows) {
+				log.Printf("could not check username availability: %v", err)
+				http.Error(w, "Could not check username availability", http.StatusInternalServerError)
+				return
+			}
+			user, err := database.CreateUser(payload.Username, payload.Password, "user")
+			if err != nil {
+				http.Error(w, "Could not create user", http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(user)
+		})
+
+		r.With(auth.RequireAdmin(database, sessionKey)).Delete("/admin/users/{id}", func(w http.ResponseWriter, r *http.Request) {
+			id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+			if err != nil || id < 1 {
+				http.Error(w, "Invalid user id", http.StatusBadRequest)
+				return
+			}
+			deleted, err := database.DeleteMember(id)
+			if err != nil {
+				http.Error(w, "Could not delete user", http.StatusInternalServerError)
+				return
+			}
+			if !deleted {
+				http.Error(w, "Normal user not found", http.StatusNotFound)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+		})
+
+		r.With(auth.RequireAuth(database, sessionKey)).Get("/movies", func(w http.ResponseWriter, r *http.Request) {
 			if _, err := database.ScanFolder(moviesDir); err != nil {
 				log.Printf("could not refresh movie library: %v", err)
 				http.Error(w, "Could not refresh movie library", http.StatusInternalServerError)
@@ -121,7 +202,7 @@ func main() {
 			_ = json.NewEncoder(w).Encode(movies)
 		})
 
-		r.With(auth.RequireAuth(database)).Post("/movies", func(w http.ResponseWriter, r *http.Request) {
+		r.With(auth.RequireAdmin(database, sessionKey)).Post("/movies", func(w http.ResponseWriter, r *http.Request) {
 			if err := r.ParseMultipartForm(32 << 20); err != nil {
 				http.Error(w, "Upload too large or invalid multipart payload", http.StatusBadRequest)
 				return
@@ -171,7 +252,7 @@ func main() {
 			_ = json.NewEncoder(w).Encode(movie)
 		})
 
-		r.With(auth.RequireAuth(database)).Get("/movies/{id}", func(w http.ResponseWriter, r *http.Request) {
+		r.With(auth.RequireAuth(database, sessionKey)).Get("/movies/{id}", func(w http.ResponseWriter, r *http.Request) {
 			id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 			if err != nil {
 				http.Error(w, "Invalid movie id", http.StatusBadRequest)
@@ -186,7 +267,7 @@ func main() {
 			_ = json.NewEncoder(w).Encode(movie)
 		})
 
-		r.With(auth.RequireAuth(database)).Get("/movies/{id}/stream", func(w http.ResponseWriter, r *http.Request) {
+		r.With(auth.RequireAuth(database, sessionKey)).Get("/movies/{id}/stream", func(w http.ResponseWriter, r *http.Request) {
 			id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 			if err != nil {
 				http.Error(w, "Invalid movie id", http.StatusBadRequest)
@@ -200,7 +281,7 @@ func main() {
 			media.ServeMovie(w, r, movie.FilePath)
 		})
 
-		r.With(auth.RequireAuth(database)).Get("/movies/{id}/download", func(w http.ResponseWriter, r *http.Request) {
+		r.With(auth.RequireAuth(database, sessionKey)).Get("/movies/{id}/download", func(w http.ResponseWriter, r *http.Request) {
 			id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 			if err != nil {
 				http.Error(w, "Invalid movie id", http.StatusBadRequest)
@@ -214,8 +295,8 @@ func main() {
 			media.DownloadMovie(w, r, movie.FilePath)
 		})
 
-		r.With(auth.RequireAuth(database)).Get("/progress", func(w http.ResponseWriter, r *http.Request) {
-			user, err := auth.CurrentUser(r, database)
+		r.With(auth.RequireAuth(database, sessionKey)).Get("/progress", func(w http.ResponseWriter, r *http.Request) {
+			user, err := auth.CurrentUser(r, database, sessionKey)
 			if err != nil {
 				http.Error(w, "Unauthorized", http.StatusUnauthorized)
 				return
@@ -229,13 +310,13 @@ func main() {
 			_ = json.NewEncoder(w).Encode(progress)
 		})
 
-		r.With(auth.RequireAuth(database)).Post("/movies/{id}/progress", func(w http.ResponseWriter, r *http.Request) {
+		r.With(auth.RequireAuth(database, sessionKey)).Post("/movies/{id}/progress", func(w http.ResponseWriter, r *http.Request) {
 			id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 			if err != nil {
 				http.Error(w, "Invalid movie id", http.StatusBadRequest)
 				return
 			}
-			user, err := auth.CurrentUser(r, database)
+			user, err := auth.CurrentUser(r, database, sessionKey)
 			if err != nil {
 				http.Error(w, "Unauthorized", http.StatusUnauthorized)
 				return
@@ -254,8 +335,8 @@ func main() {
 			w.WriteHeader(http.StatusNoContent)
 		})
 
-		r.With(auth.RequireAuth(database)).Get("/my-list", func(w http.ResponseWriter, r *http.Request) {
-			user, err := auth.CurrentUser(r, database)
+		r.With(auth.RequireAuth(database, sessionKey)).Get("/my-list", func(w http.ResponseWriter, r *http.Request) {
+			user, err := auth.CurrentUser(r, database, sessionKey)
 			if err != nil {
 				http.Error(w, "Unauthorized", http.StatusUnauthorized)
 				return
@@ -269,13 +350,13 @@ func main() {
 			_ = json.NewEncoder(w).Encode(movies)
 		})
 
-		r.With(auth.RequireAuth(database)).Post("/my-list/{id}", func(w http.ResponseWriter, r *http.Request) {
+		r.With(auth.RequireAuth(database, sessionKey)).Post("/my-list/{id}", func(w http.ResponseWriter, r *http.Request) {
 			id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 			if err != nil {
 				http.Error(w, "Invalid movie id", http.StatusBadRequest)
 				return
 			}
-			user, err := auth.CurrentUser(r, database)
+			user, err := auth.CurrentUser(r, database, sessionKey)
 			if err != nil {
 				http.Error(w, "Unauthorized", http.StatusUnauthorized)
 				return
@@ -287,13 +368,13 @@ func main() {
 			w.WriteHeader(http.StatusNoContent)
 		})
 
-		r.With(auth.RequireAuth(database)).Delete("/my-list/{id}", func(w http.ResponseWriter, r *http.Request) {
+		r.With(auth.RequireAuth(database, sessionKey)).Delete("/my-list/{id}", func(w http.ResponseWriter, r *http.Request) {
 			id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 			if err != nil {
 				http.Error(w, "Invalid movie id", http.StatusBadRequest)
 				return
 			}
-			user, err := auth.CurrentUser(r, database)
+			user, err := auth.CurrentUser(r, database, sessionKey)
 			if err != nil {
 				http.Error(w, "Unauthorized", http.StatusUnauthorized)
 				return
@@ -306,7 +387,7 @@ func main() {
 		})
 	})
 
-	r.With(auth.RequireAdmin(database)).Post("/api/scans", func(w http.ResponseWriter, r *http.Request) {
+	r.With(auth.RequireAdmin(database, sessionKey)).Post("/api/scans", func(w http.ResponseWriter, r *http.Request) {
 		var payload struct {
 			Path string `json:"path"`
 		}
@@ -331,7 +412,7 @@ func main() {
 		_ = json.NewEncoder(w).Encode(movies)
 	})
 
-	r.With(auth.RequireAdmin(database)).Get("/api/folders", func(w http.ResponseWriter, r *http.Request) {
+	r.With(auth.RequireAdmin(database, sessionKey)).Get("/api/folders", func(w http.ResponseWriter, r *http.Request) {
 		folders, err := database.ListFolders()
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -368,6 +449,60 @@ func main() {
 }
 
 const activeDeviceWindow = 2 * time.Minute
+
+var usernamePattern = regexp.MustCompile(`^[A-Za-z0-9._-]{3,32}$`)
+
+func validUsername(username string) bool {
+	return usernamePattern.MatchString(username)
+}
+
+func loadSessionKey(dataDir, configured string) ([]byte, error) {
+	if configured != "" {
+		if len(configured) < 32 {
+			return nil, errors.New("FAMILYFLIX_SESSION_KEY must be at least 32 bytes")
+		}
+		return []byte(configured), nil
+	}
+
+	keyPath := filepath.Join(dataDir, "session.key")
+	key, err := os.ReadFile(keyPath)
+	if err == nil {
+		if len(key) < 32 {
+			return nil, errors.New("stored session key must be at least 32 bytes")
+		}
+		return key, nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+
+	key = make([]byte, 32)
+	if _, err := rand.Read(key); err != nil {
+		return nil, err
+	}
+	file, err := os.OpenFile(keyPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		if errors.Is(err, os.ErrExist) {
+			existingKey, readErr := os.ReadFile(keyPath)
+			if readErr != nil {
+				return nil, readErr
+			}
+			if len(existingKey) < 32 {
+				return nil, errors.New("stored session key must be at least 32 bytes")
+			}
+			return existingKey, nil
+		}
+		return nil, err
+	}
+	if _, err := file.Write(key); err != nil {
+		_ = file.Close()
+		return nil, err
+	}
+	if err := file.Close(); err != nil {
+		return nil, err
+	}
+	return key, nil
+}
 
 type deviceTracker struct {
 	mu       sync.Mutex
